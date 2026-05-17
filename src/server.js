@@ -9,7 +9,7 @@ const { parseWeiboUser } = require('./lib/user');
 const { StateStore } = require('./lib/state');
 const { PagePool } = require('./lib/pagePool');
 const { serveScreenshot } = require('./lib/screenshotServer');
-const { checkWeclawHealth, getWeclawConfig, notifyResults, sendWeclawTest } = require('./lib/notifier');
+const { checkWeclawBindingHealth, checkWeclawHealth, getWeclawConfig, normalizeBinding, notifyResults, sendWeclawTest } = require('./lib/notifier');
 
 const ROOT = path.resolve(__dirname, '..');
 const UI_ROOT = path.join(ROOT, 'src', 'ui');
@@ -17,6 +17,7 @@ const HOST = process.env.WEIBO_MONITOR_UI_HOST || '127.0.0.1';
 const PORT = Number(process.env.WEIBO_MONITOR_UI_PORT || 18787);
 const OPEN_BROWSER_ON_START = process.env.WEIBO_MONITOR_OPEN_BROWSER_ON_START !== '0';
 const WECLAW_LOG_FILE = process.env.WEIBO_MONITOR_WECLAW_LOG || path.join(ROOT, 'data', 'weclaw.log');
+const WECLAW_LOG_DIR = process.env.WEIBO_MONITOR_WECLAW_LOG_DIR || path.dirname(WECLAW_LOG_FILE);
 let browserSession = null;
 let pagePool = null;
 let loginPage = null;
@@ -94,6 +95,20 @@ function readFileTail(file, maxBytes = 256 * 1024) {
   return buffer.toString('utf8');
 }
 
+function stripAnsi(text) {
+  return String(text || '').replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '');
+}
+
+function resolveWeclawLogFile(input) {
+  const logDir = path.resolve(WECLAW_LOG_DIR);
+  const requested = input ? String(input) : WECLAW_LOG_FILE;
+  const resolved = path.isAbsolute(requested) ? path.resolve(requested) : path.resolve(logDir, requested);
+  if (resolved !== logDir && !resolved.startsWith(`${logDir}${path.sep}`)) {
+    throw new Error('Invalid WeClaw log file path.');
+  }
+  return resolved;
+}
+
 function extractLatestWeclawSender(text) {
   let latest = null;
   const pattern = /\[handler\]\s+received from\s+([^:\s]+@im\.wechat):/g;
@@ -103,14 +118,23 @@ function extractLatestWeclawSender(text) {
   return latest;
 }
 
-function findLatestWeclawSender() {
-  const fromFile = extractLatestWeclawSender(readFileTail(WECLAW_LOG_FILE));
-  if (fromFile) return { to: fromFile, source: WECLAW_LOG_FILE };
+function findLatestWeclawSender(logFile) {
+  const resolvedLogFile = resolveWeclawLogFile(logFile);
+  const fromFile = extractLatestWeclawSender(readFileTail(resolvedLogFile));
+  if (fromFile) return { to: fromFile, source: resolvedLogFile };
 
-  const fromRuntime = extractLatestWeclawSender(runtimeLogs.join('\n'));
+  const fromRuntime = logFile ? null : extractLatestWeclawSender(runtimeLogs.join('\n'));
   if (fromRuntime) return { to: fromRuntime, source: 'runtime logs' };
 
   return null;
+}
+
+function readWeclawLogTail(logFile) {
+  const resolvedLogFile = resolveWeclawLogFile(logFile);
+  return {
+    logFile: resolvedLogFile,
+    log: stripAnsi(readFileTail(resolvedLogFile, 32 * 1024))
+  };
 }
 
 function loginScreenshotPath() {
@@ -426,6 +450,8 @@ async function handleApi(req, res) {
 
   if (req.method === 'POST' && url.pathname === '/api/weclaw/health') {
     try {
+      const body = await readBody(req);
+      if (body.binding) return sendJson(res, 200, await checkWeclawBindingHealth(normalizeBinding(body.binding)));
       return sendJson(res, 200, await checkWeclawHealth(readConfig()));
     } catch (error) {
       return sendJson(res, 500, { error: error.message });
@@ -434,11 +460,11 @@ async function handleApi(req, res) {
 
   if (req.method === 'GET' && url.pathname === '/api/weclaw/last-sender') {
     try {
-      const sender = findLatestWeclawSender();
+      const sender = findLatestWeclawSender(url.searchParams.get('logFile'));
       if (!sender) {
         return sendJson(res, 404, {
-          error: '没有在 WeClaw 日志里找到最近发信人。先让接收通知的微信给机器人发一条消息，再点自动识别。',
-          logFile: WECLAW_LOG_FILE
+          error: '没有在这个 WeClaw 日志里找到最近发信人。先扫码登录，再让接收通知的微信给对应机器人发一条消息。',
+          logFile: resolveWeclawLogFile(url.searchParams.get('logFile'))
         });
       }
       return sendJson(res, 200, sender);
@@ -447,9 +473,18 @@ async function handleApi(req, res) {
     }
   }
 
+  if (req.method === 'GET' && url.pathname === '/api/weclaw/log-tail') {
+    try {
+      return sendJson(res, 200, readWeclawLogTail(url.searchParams.get('logFile')));
+    } catch (error) {
+      return sendJson(res, 500, { error: error.message });
+    }
+  }
+
   if (req.method === 'POST' && url.pathname === '/api/notify/test') {
     try {
-      return sendJson(res, 200, await sendWeclawTest(readConfig()));
+      const body = await readBody(req);
+      return sendJson(res, 200, await sendWeclawTest(readConfig(), body || {}));
     } catch (error) {
       return sendJson(res, 500, { error: error.message });
     }

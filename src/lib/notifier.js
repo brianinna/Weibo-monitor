@@ -1,13 +1,63 @@
 const http = require('http');
 const https = require('https');
 
+function splitIds(value) {
+  if (Array.isArray(value)) return value.flatMap(splitIds);
+  return String(value || '')
+    .split(/[\s,;，；]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function normalizeBinding(binding, defaults = {}, index = 0) {
+  const merged = {
+    name: index === 0 ? 'weclaw' : `weclaw-${index + 1}`,
+    enabled: true,
+    apiUrl: defaults.apiUrl || 'http://127.0.0.1:18011/api/send',
+    to: '',
+    logFile: defaults.logFile || '',
+    ...(binding || {})
+  };
+  const ids = splitIds(merged.to || merged.recipient || merged.recipients);
+  merged.to = ids[0] || '';
+  delete merged.recipient;
+  delete merged.recipients;
+  return merged;
+}
+
+function getWeclawBindings(weclaw) {
+  const defaults = {
+    apiUrl: weclaw.apiUrl || 'http://127.0.0.1:18011/api/send',
+    logFile: weclaw.logFile || ''
+  };
+  const configured = Array.isArray(weclaw.bindings) ? weclaw.bindings : [];
+  if (configured.length > 0) {
+    return configured.map((binding, index) => normalizeBinding(binding, defaults, index));
+  }
+
+  const legacyIds = splitIds(weclaw.to || weclaw.recipients);
+  return [
+    normalizeBinding(
+      {
+        name: weclaw.name || 'weclaw',
+        enabled: true,
+        apiUrl: defaults.apiUrl,
+        to: legacyIds[0] || '',
+        logFile: defaults.logFile
+      },
+      defaults,
+      0
+    )
+  ];
+}
+
 function getWeclawConfig(config) {
   const weclaw = config && config.notifications && config.notifications.weclaw;
   const merged = {
     enabled: false,
     apiUrl: 'http://127.0.0.1:18011/api/send',
     to: '',
-    recipients: [],
+    bindings: [],
     sendImages: true,
     mediaHost: '127.0.0.1',
     mediaPort: 18789,
@@ -16,29 +66,15 @@ function getWeclawConfig(config) {
     startArgs: ['start', '-f'],
     ...(weclaw || {})
   };
-  merged.recipients = normalizeRecipients([...(asRecipientList(merged.recipients)), ...(asRecipientList(merged.to))]);
-  merged.to = merged.recipients[0] || '';
+  merged.bindings = getWeclawBindings(merged);
+  merged.apiUrl = merged.bindings[0] ? merged.bindings[0].apiUrl : merged.apiUrl;
+  merged.to = merged.bindings[0] ? merged.bindings[0].to : '';
+  delete merged.recipients;
   return merged;
 }
 
-function asRecipientList(value) {
-  if (Array.isArray(value)) return value.flatMap(asRecipientList);
-  return String(value || '')
-    .split(/[\s,;，；]+/)
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
-function normalizeRecipients(values) {
-  const seen = new Set();
-  const recipients = [];
-  for (const value of values || []) {
-    const recipient = String(value || '').trim();
-    if (!recipient || seen.has(recipient)) continue;
-    seen.add(recipient);
-    recipients.push(recipient);
-  }
-  return recipients;
+function getActiveBindings(weclaw) {
+  return weclaw.bindings.filter((binding) => binding.enabled !== false && binding.apiUrl);
 }
 
 function truncate(value, maxLength) {
@@ -110,15 +146,25 @@ function healthUrlFromApi(apiUrl) {
   return `${target.protocol}//${target.host}/health`;
 }
 
-async function checkWeclawHealth(config) {
-  const weclaw = getWeclawConfig(config);
-  const healthUrl = healthUrlFromApi(weclaw.apiUrl);
+async function checkWeclawBindingHealth(binding) {
+  const healthUrl = healthUrlFromApi(binding.apiUrl);
   await requestJson('GET', healthUrl, null, 5000);
-  return { ok: true, url: healthUrl };
+  return { ok: true, name: binding.name || '', url: healthUrl };
 }
 
-async function sendWeclawPayload(weclaw, payload) {
-  return await requestJson('POST', weclaw.apiUrl, payload);
+async function checkWeclawHealth(config) {
+  const weclaw = getWeclawConfig(config);
+  const bindings = getActiveBindings(weclaw);
+  if (bindings.length === 0) throw new Error('没有启用的 WeClaw 绑定。');
+  const results = [];
+  for (const binding of bindings) {
+    results.push(await checkWeclawBindingHealth(binding));
+  }
+  return { ok: true, results };
+}
+
+async function sendWeclawPayload(binding, payload) {
+  return await requestJson('POST', binding.apiUrl, payload);
 }
 
 function buildScreenshotUrl(post, weclaw, options = {}) {
@@ -134,15 +180,15 @@ function buildScreenshotUrl(post, weclaw, options = {}) {
 async function notifyResults(config, results, options = {}) {
   const log = options.log || (() => {});
   const weclaw = getWeclawConfig(config);
-  const recipients = weclaw.recipients;
+  const bindings = getActiveBindings(weclaw);
   const summary = { sentPosts: 0, sentImages: 0, failedPosts: 0, failedImages: 0, skipped: false };
 
   if (!weclaw.enabled) {
     summary.skipped = true;
     return summary;
   }
-  if (recipients.length === 0) {
-    log('WeClaw notification skipped: notifications.weclaw.recipients is empty');
+  if (bindings.length === 0) {
+    log('WeClaw notification skipped: no enabled bindings');
     summary.skipped = true;
     return summary;
   }
@@ -151,32 +197,37 @@ async function notifyResults(config, results, options = {}) {
     const fresh = Array.isArray(result.fresh) ? result.fresh.slice().reverse() : [];
     for (const post of fresh) {
       const mediaUrl = buildScreenshotUrl(post, weclaw, options);
-      for (const to of recipients) {
+      for (const binding of bindings) {
+        if (!binding.to) {
+          log(`WeClaw notification skipped binding=${binding.name || binding.apiUrl}: to is empty`);
+          continue;
+        }
+
         try {
-          await sendWeclawPayload(weclaw, {
-            to,
+          await sendWeclawPayload(binding, {
+            to: binding.to,
             text: buildPostText(result.user || {}, post)
           });
           summary.sentPosts += 1;
-          log(`WeClaw text sent post=${post.id} to=${to}`);
+          log(`WeClaw text sent post=${post.id} binding=${binding.name || binding.apiUrl}`);
         } catch (error) {
           summary.failedPosts += 1;
-          log(`WeClaw text failed post=${post.id} to=${to}: ${error.message}`);
+          log(`WeClaw text failed post=${post.id} binding=${binding.name || binding.apiUrl}: ${error.message}`);
           continue;
         }
 
         if (weclaw.sendImages === false || !mediaUrl) continue;
 
         try {
-          await sendWeclawPayload(weclaw, {
-            to,
+          await sendWeclawPayload(binding, {
+            to: binding.to,
             media_url: mediaUrl
           });
           summary.sentImages += 1;
-          log(`WeClaw image sent post=${post.id} to=${to}`);
+          log(`WeClaw image sent post=${post.id} binding=${binding.name || binding.apiUrl}`);
         } catch (error) {
           summary.failedImages += 1;
-          log(`WeClaw image failed post=${post.id} to=${to}: ${error.message}`);
+          log(`WeClaw image failed post=${post.id} binding=${binding.name || binding.apiUrl}: ${error.message}`);
         }
       }
     }
@@ -187,34 +238,39 @@ async function notifyResults(config, results, options = {}) {
 
 async function sendWeclawTest(config, options = {}) {
   const weclaw = getWeclawConfig(config);
-  const recipients = weclaw.recipients;
-  if (recipients.length === 0) throw new Error('接收人 ID 为空。让接收通知的微信给机器人发一条消息后，点击“识别最近发信人”。');
+  const bindings = options.binding ? [normalizeBinding(options.binding)] : getActiveBindings(weclaw);
+  if (bindings.length === 0) throw new Error('没有启用的 WeClaw 绑定。');
 
   const failures = [];
   let sent = 0;
-  for (const to of recipients) {
+  for (const binding of bindings) {
+    if (!binding.to) {
+      failures.push(`${binding.name || binding.apiUrl}: 接收人 ID 为空`);
+      continue;
+    }
     try {
-      await sendWeclawPayload(weclaw, {
-        to,
+      await sendWeclawPayload(binding, {
+        to: binding.to,
         text: options.text || `微博监控测试消息：${new Date().toLocaleString('zh-CN', { hour12: false })}`
       });
       sent += 1;
     } catch (error) {
-      failures.push(`${to}: ${error.message}`);
+      failures.push(`${binding.name || binding.apiUrl}: ${error.message}`);
     }
   }
 
   if (failures.length > 0) {
-    throw new Error(`测试消息发送失败：成功 ${sent}/${recipients.length}；${failures[0]}`);
+    throw new Error(`测试消息发送失败：成功 ${sent}/${bindings.length}；${failures[0]}`);
   }
-  return { ok: true, sentRecipients: sent };
+  return { ok: true, sentBindings: sent };
 }
 
 module.exports = {
   getWeclawConfig,
+  normalizeBinding,
+  checkWeclawBindingHealth,
   checkWeclawHealth,
   notifyResults,
   sendWeclawPayload,
-  sendWeclawTest,
-  normalizeRecipients
+  sendWeclawTest
 };

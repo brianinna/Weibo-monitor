@@ -110,22 +110,18 @@
             <input id="notifyImages" type="checkbox" />
             发送微博截图
           </label>
-          <label>
-            WeClaw API
-            <input id="weclawApiUrl" placeholder="http://127.0.0.1:18011/api/send" />
-          </label>
-          <label>
-            接收人 ID
-            <textarea id="weclawTo" placeholder="每行一个 user_id@im.wechat，或用逗号分隔"></textarea>
-          </label>
+          <div class="span-2">
+            <div id="weclawBindings" class="binding-list"></div>
+          </div>
         </div>
         <div class="actions">
           <button id="startWeclawBtn">启动/扫码登录</button>
-          <button id="detectWeclawToBtn" class="secondary" type="button">识别最近发信人</button>
+          <button id="addWeclawBindingBtn" class="secondary" type="button">添加 WeClaw 绑定</button>
           <button id="checkWeclawBtn" class="secondary">检测连接</button>
           <button id="testNotifyBtn" class="secondary">发送测试</button>
         </div>
         <p id="weclawStatus" class="status">未检测</p>
+        <pre id="weclawQrLog" class="hidden"></pre>
       </section>
     </main>
     <script src="/app.js"></script>

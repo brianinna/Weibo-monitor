@@ -26,7 +26,22 @@
       "enabled": false,
       "apiUrl": "http://weclaw:18011/api/send",
       "to": "",
-      "recipients": [],
+      "bindings": [
+        {
+          "name": "weclaw",
+          "enabled": true,
+          "apiUrl": "http://weclaw:18011/api/send",
+          "to": "",
+          "logFile": "/app/weclaw-logs/weclaw.log"
+        },
+        {
+          "name": "weclaw-2",
+          "enabled": false,
+          "apiUrl": "http://weclaw-2:18011/api/send",
+          "to": "",
+          "logFile": "/app/weclaw-logs/weclaw-2.log"
+        }
+      ],
       "sendImages": true,
       "mediaBaseUrl": "http://weibo-monitor:18787",
       "mediaHost": "0.0.0.0",

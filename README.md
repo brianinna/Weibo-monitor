@@ -37,7 +37,7 @@ http://127.0.0.1:18011/api/send
 
 - 启动 `weclaw start -f`，首次启动时在日志里显示扫码登录信息。
 - 配置 WeClaw API 地址。
-- 配置一个或多个接收人 ID，例如 `user_id@im.wechat`；Docker 部署时可让接收通知的微信先给机器人发一条消息，再点“识别最近发信人”自动填入，多个 ID 每行一个。
+- 配置一个或多个 WeClaw 绑定；每个绑定对应一个 WeClaw 实例、一个 API 地址和一个接收人 ID。
 - 发送测试消息。
 - 监控到新微博后先保存到本地库和截图，再发送文字和微博截图。
 
@@ -45,10 +45,10 @@ http://127.0.0.1:18011/api/send
 
 ## Linux/Docker 部署
 
-推荐 Linux 服务器使用 Docker Compose 部署。Compose 会启动两个容器：
+推荐 Linux 服务器使用 Docker Compose 部署。Compose 会启动多个容器：
 
 - `weibo-monitor`：内置 Chromium、Xvfb 和 noVNC，不依赖宿主机安装 Chrome。
-- `weclaw`：从 WeClaw 官方 GitHub release 构建本地镜像，负责微信扫码登录和发送消息。
+- `weclaw` / `weclaw-2`：从 WeClaw 官方 GitHub release 构建本地镜像，每个实例独立扫码登录一套微信。
 
 启动：
 
@@ -73,20 +73,23 @@ ssh -L 18787:127.0.0.1:18787 -L 18790:127.0.0.1:18790 user@server
 
    ```bash
    docker compose logs -f weclaw
+   docker compose logs -f weclaw-2
    ```
 
-2. 打开 noVNC 页面，在容器 Chromium 里登录微博。
-3. 打开配置界面，修改监控用户。
-4. 在“微信通知”里保持 WeClaw API 为 `http://weclaw:18011/api/send`。
-5. 用接收通知的微信给机器人发一条消息，例如 `1`。
-6. 在“微信通知”里点击“识别最近发信人”，自动填入接收人 ID。
-7. 启用 WeClaw 通知，发送测试消息。
+配置页也可以直接点每个绑定里的“显示扫码日志”，扫码后让接收通知的微信给对应机器人发一条消息，再点这个绑定里的“识别最近发信人”。默认 `weclaw` 使用 `http://weclaw:18011/api/send`，`weclaw-2` 使用 `http://weclaw-2:18011/api/send`。
+
+2. 打开配置界面，修改监控用户。
+3. 每个 WeClaw 绑定扫码登录后，用接收通知的微信给对应机器人发一条消息，例如 `1`。
+4. 在对应绑定上点击“识别最近发信人”，自动填入接收人 ID。
+5. 启用 WeClaw 通知，发送测试消息。
 
 持久化数据在：
 
 ```text
 docker-data/weibo-monitor
 docker-data/weclaw
+docker-data/weclaw-2
+docker-data/weclaw-logs
 ```
 
 不要把 WeClaw API 直接暴露到公网；它可以主动发送微信消息。需要远程访问时优先使用 SSH 隧道或带认证的反向代理。

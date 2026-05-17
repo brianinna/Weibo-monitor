@@ -47,7 +47,7 @@ function loadConfig(root) {
       enabled: false,
       apiUrl: 'http://127.0.0.1:18011/api/send',
       to: '',
-      recipients: [],
+      bindings: [],
       sendImages: true,
       mediaBaseUrl: '',
       mediaHost: '127.0.0.1',

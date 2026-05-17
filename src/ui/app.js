@@ -20,21 +20,29 @@ function escapeHtml(value) {
     .replace(/"/g, '&quot;');
 }
 
-function parseRecipients(value) {
-  const items = Array.isArray(value) ? value : String(value || '').split(/[\s,;，；]+/);
-  const seen = new Set();
-  const recipients = [];
-  for (const item of items.flatMap((entry) => String(entry || '').split(/[\s,;，；]+/))) {
-    const recipient = item.trim();
-    if (!recipient || seen.has(recipient)) continue;
-    seen.add(recipient);
-    recipients.push(recipient);
-  }
-  return recipients;
+function defaultWeclawBinding(index = 0) {
+  return {
+    name: index === 0 ? 'weclaw' : `weclaw-${index + 1}`,
+    enabled: index === 0,
+    apiUrl: index === 0 ? 'http://weclaw:18011/api/send' : `http://weclaw-${index + 1}:18011/api/send`,
+    to: '',
+    logFile: index === 0 ? '/app/weclaw-logs/weclaw.log' : `/app/weclaw-logs/weclaw-${index + 1}.log`
+  };
 }
 
-function getDisplayedRecipients(weclaw) {
-  return parseRecipients([weclaw.recipients || '', weclaw.to || '']);
+function normalizeWeclawBindings(weclaw) {
+  const bindings = Array.isArray(weclaw.bindings) ? weclaw.bindings : [];
+  if (bindings.length > 0) {
+    return bindings.map((binding, index) => ({
+      ...defaultWeclawBinding(index),
+      ...binding,
+      to: binding.to || ''
+    }));
+  }
+  const first = defaultWeclawBinding(0);
+  first.apiUrl = weclaw.apiUrl || first.apiUrl;
+  first.to = weclaw.to || (Array.isArray(weclaw.recipients) ? weclaw.recipients[0] || '' : '');
+  return [first];
 }
 
 function getWeclawConfig() {
@@ -44,7 +52,7 @@ function getWeclawConfig() {
       enabled: false,
       apiUrl: 'http://127.0.0.1:18011/api/send',
       to: '',
-      recipients: [],
+      bindings: [],
       sendImages: true
     };
   }
@@ -72,6 +80,117 @@ function renderUsers() {
     });
     list.appendChild(row);
   }
+}
+
+function collectBindingFromRow(row) {
+  return {
+    name: row.querySelector('[data-field="name"]').value.trim() || 'weclaw',
+    enabled: row.querySelector('[data-field="enabled"]').checked,
+    apiUrl: row.querySelector('[data-field="apiUrl"]').value.trim(),
+    to: row.querySelector('[data-field="to"]').value.trim(),
+    logFile: row.querySelector('[data-field="logFile"]').value.trim()
+  };
+}
+
+function getBindingRows() {
+  return Array.from(document.querySelectorAll('.weclaw-binding'));
+}
+
+function renderWeclawBindings() {
+  const weclaw = getWeclawConfig();
+  weclaw.bindings = normalizeWeclawBindings(weclaw);
+  const list = $('weclawBindings');
+  list.innerHTML = '';
+
+  weclaw.bindings.forEach((binding, index) => {
+    const row = document.createElement('div');
+    row.className = 'weclaw-binding';
+    row.innerHTML = `
+      <label class="checkbox">
+        <input data-field="enabled" type="checkbox" ${binding.enabled === false ? '' : 'checked'} />
+        启用
+      </label>
+      <label>
+        绑定名
+        <input data-field="name" value="${escapeHtml(binding.name || '')}" />
+      </label>
+      <label>
+        WeClaw API
+        <input data-field="apiUrl" value="${escapeHtml(binding.apiUrl || '')}" />
+      </label>
+      <label>
+        接收人 ID
+        <input data-field="to" placeholder="user_id@im.wechat" value="${escapeHtml(binding.to || '')}" />
+      </label>
+      <label>
+        扫码日志文件
+        <input data-field="logFile" value="${escapeHtml(binding.logFile || '')}" />
+      </label>
+      <div class="binding-actions">
+        <button class="secondary" type="button" data-action="qr">显示扫码日志</button>
+        <button class="secondary" type="button" data-action="detect">识别最近发信人</button>
+        <button class="secondary" type="button" data-action="health">检测这个绑定</button>
+        <button class="secondary" type="button" data-action="test">测试这个绑定</button>
+        <button class="secondary" type="button" data-action="delete">删除</button>
+      </div>
+    `;
+
+    row.querySelector('[data-action="qr"]').addEventListener('click', async () => {
+      const current = collectBindingFromRow(row);
+      $('weclawStatus').textContent = `正在读取 ${current.name} 的扫码日志...`;
+      try {
+        const data = await api(`/api/weclaw/log-tail?logFile=${encodeURIComponent(current.logFile)}`);
+        $('weclawQrLog').classList.remove('hidden');
+        $('weclawQrLog').textContent = data.log || '日志为空。如果这是新实例，等几秒后再刷新扫码日志。';
+        $('weclawStatus').textContent = `已读取 ${current.name} 的扫码日志`;
+      } catch (error) {
+        $('weclawStatus').textContent = error.message;
+      }
+    });
+
+    row.querySelector('[data-action="detect"]').addEventListener('click', async () => {
+      const current = collectBindingFromRow(row);
+      $('weclawStatus').textContent = `正在识别 ${current.name} 最近发信人...`;
+      try {
+        const data = await api(`/api/weclaw/last-sender?logFile=${encodeURIComponent(current.logFile)}`);
+        row.querySelector('[data-field="to"]').value = data.to;
+        await saveConfig(false);
+        $('weclawStatus').textContent = `已填入 ${current.name} 接收人 ID：${data.to}`;
+      } catch (error) {
+        $('weclawStatus').textContent = error.message;
+      }
+    });
+
+    row.querySelector('[data-action="health"]').addEventListener('click', async () => {
+      const current = collectBindingFromRow(row);
+      $('weclawStatus').textContent = `正在检测 ${current.name}...`;
+      try {
+        await api('/api/weclaw/health', { method: 'POST', body: JSON.stringify({ binding: current }) });
+        $('weclawStatus').textContent = `${current.name} API 可用`;
+      } catch (error) {
+        $('weclawStatus').textContent = error.message;
+      }
+    });
+
+    row.querySelector('[data-action="test"]').addEventListener('click', async () => {
+      await saveConfig(false);
+      const current = collectBindingFromRow(row);
+      $('weclawStatus').textContent = `正在测试 ${current.name}...`;
+      try {
+        await api('/api/notify/test', { method: 'POST', body: JSON.stringify({ binding: current }) });
+        $('weclawStatus').textContent = `${current.name} 测试消息已发送`;
+      } catch (error) {
+        $('weclawStatus').textContent = error.message;
+      }
+    });
+
+    row.querySelector('[data-action="delete"]').addEventListener('click', () => {
+      weclaw.bindings.splice(index, 1);
+      renderWeclawBindings();
+    });
+
+    list.appendChild(row);
+  });
 }
 
 function formatTime(value) {
@@ -117,8 +236,7 @@ function fillForm() {
   const weclaw = getWeclawConfig();
   $('notifyWeclawEnabled').checked = Boolean(weclaw.enabled);
   $('notifyImages').checked = weclaw.sendImages !== false;
-  $('weclawApiUrl').value = weclaw.apiUrl || 'http://127.0.0.1:18011/api/send';
-  $('weclawTo').value = getDisplayedRecipients(weclaw).join('\n');
+  renderWeclawBindings();
   renderUsers();
 }
 
@@ -133,9 +251,11 @@ function collectForm() {
   const weclaw = getWeclawConfig();
   weclaw.enabled = $('notifyWeclawEnabled').checked;
   weclaw.sendImages = $('notifyImages').checked;
-  weclaw.apiUrl = $('weclawApiUrl').value.trim() || 'http://127.0.0.1:18011/api/send';
-  weclaw.recipients = parseRecipients($('weclawTo').value);
-  weclaw.to = weclaw.recipients[0] || '';
+  weclaw.bindings = getBindingRows().map(collectBindingFromRow);
+  const first = weclaw.bindings[0] || {};
+  weclaw.apiUrl = first.apiUrl || 'http://127.0.0.1:18011/api/send';
+  weclaw.to = first.to || '';
+  delete weclaw.recipients;
 }
 
 async function saveConfig(showStatus = true) {
@@ -269,22 +389,11 @@ async function init() {
     }
   });
 
-  $('detectWeclawToBtn').addEventListener('click', async () => {
-    $('weclawStatus').textContent = '正在读取 WeClaw 最近发信人...';
-    try {
-      const data = await api('/api/weclaw/last-sender');
-      const recipients = parseRecipients($('weclawTo').value);
-      const existed = recipients.includes(data.to);
-      if (!existed) recipients.push(data.to);
-      $('weclawTo').value = recipients.join('\n');
-      const weclaw = getWeclawConfig();
-      weclaw.recipients = recipients;
-      weclaw.to = recipients[0] || '';
-      await saveConfig(false);
-      $('weclawStatus').textContent = existed ? `接收人 ID 已存在：${data.to}` : `已添加并保存接收人 ID：${data.to}`;
-    } catch (error) {
-      $('weclawStatus').textContent = error.message;
-    }
+  $('addWeclawBindingBtn').addEventListener('click', () => {
+    const weclaw = getWeclawConfig();
+    weclaw.bindings = normalizeWeclawBindings(weclaw);
+    weclaw.bindings.push(defaultWeclawBinding(weclaw.bindings.length));
+    renderWeclawBindings();
   });
 
   $('checkWeclawBtn').addEventListener('click', async () => {
