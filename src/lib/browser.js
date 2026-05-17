@@ -11,6 +11,36 @@ function expandEnv(input) {
     .replace(/\$([A-Za-z_][A-Za-z0-9_]*)/g, (_, key) => process.env[key] || '');
 }
 
+function isContainer() {
+  return process.env.WEIBO_MONITOR_CONTAINER === '1' || fs.existsSync('/.dockerenv');
+}
+
+function removeStaleBrowserLocks(userDataDir, log) {
+  if (process.platform === 'win32') return;
+  for (const name of ['SingletonLock', 'SingletonSocket', 'SingletonCookie']) {
+    const target = path.join(userDataDir, name);
+    try {
+      if (fs.existsSync(target)) {
+        fs.rmSync(target, { force: true, recursive: true });
+        log(`Removed stale browser lock: ${target}`);
+      }
+    } catch (error) {
+      log(`Could not remove stale browser lock ${target}: ${error.message}`);
+    }
+  }
+}
+
+function uniqueArgs(args) {
+  const seen = new Set();
+  const unique = [];
+  for (const arg of args) {
+    if (!arg || seen.has(arg)) continue;
+    seen.add(arg);
+    unique.push(arg);
+  }
+  return unique;
+}
+
 function getCandidates(type) {
   if (process.platform !== 'win32') {
     const edge = [
@@ -180,27 +210,50 @@ async function connectBrowser(browserConfig = {}, log = () => {}) {
 
     for (const executable of executables) {
       const userDataDir = expandEnv(browserConfig.userDataDir) || defaultUserDataDir(executable);
+      removeStaleBrowserLocks(userDataDir, log);
       const startupUrl = browserConfig.loginUrl || 'https://passport.weibo.com/sso/signin?entry=account&source=sinassopage&url=https%3A%2F%2Fmy.sina.com.cn';
-      const args = [
+      const baseArgs = [
         `--remote-debugging-port=${port}`,
+        '--remote-debugging-address=127.0.0.1',
         `--user-data-dir=${userDataDir}`,
         `--profile-directory=${browserConfig.profileDirectory || 'Default'}`,
         '--no-first-run',
         '--no-default-browser-check',
       ];
-      if (browserConfig.headless) args.push('--headless=new');
-      if (Array.isArray(browserConfig.args)) args.push(...browserConfig.args);
+      if (isContainer()) {
+        baseArgs.push(
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-gpu',
+          '--disable-software-rasterizer',
+          '--disable-crash-reporter',
+          '--no-zygote',
+          '--window-size=1366,768'
+        );
+      }
+
+      const headlessOverride = process.env.WEIBO_MONITOR_BROWSER_HEADLESS;
+      if (headlessOverride === '1' || (headlessOverride !== '0' && browserConfig.headless)) {
+        baseArgs.push('--headless=new');
+      }
+      if (Array.isArray(browserConfig.args)) baseArgs.push(...browserConfig.args);
+      const args = uniqueArgs(baseArgs);
       args.push(startupUrl);
 
       log(`Launching browser: ${executable}`);
       log(`User data dir: ${userDataDir}`);
 
       const child = spawn(executable, args, {
-        detached: true,
-        stdio: 'ignore',
+        detached: process.platform === 'win32',
+        stdio: ['ignore', 'pipe', 'pipe'],
         windowsHide: process.platform === 'win32' ? false : undefined
       });
-      child.unref();
+      if (child.stdout) child.stdout.on('data', (chunk) => log(`[browser:out] ${String(chunk).trim()}`));
+      if (child.stderr) child.stderr.on('data', (chunk) => log(`[browser:err] ${String(chunk).trim()}`));
+      child.on('error', (error) => log(`Browser process error: ${error.message}`));
+      child.on('exit', (code, signal) => log(`Browser process exited code=${code} signal=${signal || 'none'}`));
+      if (process.platform === 'win32') child.unref();
 
       try {
         await waitForDebugPort(port, startupTimeoutMs);

@@ -7,7 +7,7 @@
     "userDataDir": "/app/data/chrome-profile",
     "loginUrl": "https://weibo.com/",
     "startupTimeoutMs": 20000,
-    "headless": false,
+    "headless": true,
     "args": [
       "--no-sandbox",
       "--disable-dev-shm-usage",
