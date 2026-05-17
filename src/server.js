@@ -83,6 +83,10 @@ function loginScreenshotPath() {
   return path.join(ROOT, 'data', 'login-screenshot.png');
 }
 
+function defaultWeiboLoginUrl() {
+  return 'https://passport.weibo.com/sso/signin?entry=miniblog&source=miniblog&disp=popup&url=https%3A%2F%2Fweibo.com%2F';
+}
+
 async function getLoginPage(config) {
   const session = await getBrowserSession(config);
   if (loginPage && !loginPage.isClosed()) return loginPage;
@@ -91,20 +95,57 @@ async function getLoginPage(config) {
   return loginPage;
 }
 
+async function waitForReadyScreenshot(page) {
+  await page.waitForLoadState('domcontentloaded', { timeout: 30000 }).catch(() => {});
+  await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => {});
+  await page.waitForTimeout(1800);
+}
+
+async function findLoginPopup(context, page) {
+  const popupPromise = page.waitForEvent('popup', { timeout: 6000 }).catch(() => null);
+  const loginButton = page
+    .locator('text=登录')
+    .filter({ hasNotText: '登录/注册' })
+    .first();
+
+  try {
+    if ((await loginButton.count()) > 0) {
+      await loginButton.click({ timeout: 5000 });
+    }
+  } catch (_) {
+    // Some Weibo pages open the login layer from scripts that are brittle in headless mode.
+  }
+
+  const popup = await popupPromise;
+  if (popup) return popup;
+
+  const pages = context.pages().filter((item) => !item.isClosed());
+  const passport = pages.find((item) => /passport\.weibo\.com|newlogin/i.test(item.url()));
+  return passport || page;
+}
+
 async function openLoginAndCapture(config) {
   const page = await getLoginPage(config);
+  const context = page.context();
   await page.setViewportSize({ width: 1280, height: 900 });
-  await page.goto(config.browser.loginUrl || 'https://weibo.com/', {
+  const configuredUrl = config.browser.loginUrl || '';
+  const loginUrl = configuredUrl === 'https://weibo.com/' ? defaultWeiboLoginUrl() : configuredUrl || defaultWeiboLoginUrl();
+  await page.goto(loginUrl, {
     waitUntil: 'domcontentloaded',
     timeout: 30000
   });
-  await page.waitForTimeout(2500);
+  await waitForReadyScreenshot(page);
+
+  const capturePage = /passport\.weibo\.com/i.test(page.url()) ? page : await findLoginPopup(context, page);
+  loginPage = capturePage;
+  await capturePage.setViewportSize({ width: 1000, height: 760 }).catch(() => {});
+  await waitForReadyScreenshot(capturePage);
 
   const file = loginScreenshotPath();
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  await page.screenshot({ path: file, fullPage: false, timeout: 12000 });
+  await capturePage.screenshot({ path: file, fullPage: false, timeout: 12000 });
   return {
-    url: page.url(),
+    url: capturePage.url(),
     screenshotUrl: `/api/browser/login-screenshot?t=${Date.now()}`
   };
 }

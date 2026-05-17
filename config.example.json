@@ -5,7 +5,7 @@
     "remoteDebuggingPort": 18788,
     "profileDirectory": "Default",
     "userDataDir": "%LOCALAPPDATA%\\WeiboMonitor\\ChromeProfile",
-    "loginUrl": "https://weibo.com/",
+    "loginUrl": "https://passport.weibo.com/sso/signin?entry=miniblog&source=miniblog&disp=popup&url=https%3A%2F%2Fweibo.com%2F",
     "startupTimeoutMs": 15000,
     "headless": false,
     "args": []
