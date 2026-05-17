@@ -161,7 +161,7 @@ async function notifyResults(config, results, options = {}) {
 
 async function sendWeclawTest(config, options = {}) {
   const weclaw = getWeclawConfig(config);
-  if (!weclaw.to) throw new Error('notifications.weclaw.to is required');
+  if (!weclaw.to) throw new Error('接收人 ID 为空。让接收通知的微信给机器人发一条消息后，点击“识别最近发信人”。');
   await sendWeclawPayload(weclaw, {
     to: weclaw.to,
     text: options.text || `微博监控测试消息：${new Date().toLocaleString('zh-CN', { hour12: false })}`

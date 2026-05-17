@@ -119,11 +119,11 @@ function collectForm() {
   weclaw.to = $('weclawTo').value.trim();
 }
 
-async function saveConfig() {
+async function saveConfig(showStatus = true) {
   collectForm();
   const data = await api('/api/config', { method: 'POST', body: JSON.stringify(config) });
   config = data.config;
-  $('loginStatus').textContent = '配置已保存';
+  if (showStatus) $('loginStatus').textContent = '配置已保存';
 }
 
 function showLoginScreenshot(data) {
@@ -245,6 +245,19 @@ async function init() {
       const data = await api('/api/weclaw/start', { method: 'POST', body: '{}' });
       $('weclawStatus').textContent = data.message || (data.started ? 'WeClaw 已启动，请在日志中扫码' : 'WeClaw 已在运行');
       await loadLogs();
+    } catch (error) {
+      $('weclawStatus').textContent = error.message;
+    }
+  });
+
+  $('detectWeclawToBtn').addEventListener('click', async () => {
+    $('weclawStatus').textContent = '正在读取 WeClaw 最近发信人...';
+    try {
+      const data = await api('/api/weclaw/last-sender');
+      $('weclawTo').value = data.to;
+      getWeclawConfig().to = data.to;
+      await saveConfig(false);
+      $('weclawStatus').textContent = `已填入并保存接收人 ID：${data.to}`;
     } catch (error) {
       $('weclawStatus').textContent = error.message;
     }

@@ -23,4 +23,7 @@ RUN set -eu; \
   chmod +x /usr/local/bin/weclaw; \
   weclaw --help >/dev/null
 
-ENTRYPOINT ["weclaw"]
+COPY docker/weclaw-entrypoint.sh /usr/local/bin/weclaw-entrypoint
+RUN chmod +x /usr/local/bin/weclaw-entrypoint
+
+ENTRYPOINT ["weclaw-entrypoint"]

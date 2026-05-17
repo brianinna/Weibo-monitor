@@ -19,9 +19,11 @@ services:
       WEIBO_MONITOR_CONTAINER: "1"
       WEIBO_MONITOR_BROWSER_HEADLESS: "1"
       WEIBO_MONITOR_NOVNC_PORT: "18790"
+      WEIBO_MONITOR_WECLAW_LOG: /app/weclaw-logs/weclaw.log
       DISPLAY: ":99"
     volumes:
       - ./docker-data/weibo-monitor:/app/data
+      - ./docker-data/weclaw-logs:/app/weclaw-logs:ro
     ports:
       - "127.0.0.1:18787:18787"
       - "127.0.0.1:18790:18790"
@@ -38,7 +40,9 @@ services:
     command: ["start", "-f", "--api-addr", "0.0.0.0:18011"]
     environment:
       WECLAW_API_ADDR: 0.0.0.0:18011
+      WECLAW_LOG_FILE: /var/log/weclaw/weclaw.log
     volumes:
       - ./docker-data/weclaw:/root/.weclaw
+      - ./docker-data/weclaw-logs:/var/log/weclaw
     expose:
       - "18011"

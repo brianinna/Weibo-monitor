@@ -16,6 +16,7 @@ const UI_ROOT = path.join(ROOT, 'src', 'ui');
 const HOST = process.env.WEIBO_MONITOR_UI_HOST || '127.0.0.1';
 const PORT = Number(process.env.WEIBO_MONITOR_UI_PORT || 18787);
 const OPEN_BROWSER_ON_START = process.env.WEIBO_MONITOR_OPEN_BROWSER_ON_START !== '0';
+const WECLAW_LOG_FILE = process.env.WEIBO_MONITOR_WECLAW_LOG || path.join(ROOT, 'data', 'weclaw.log');
 let browserSession = null;
 let pagePool = null;
 let loginPage = null;
@@ -77,6 +78,39 @@ function writeConfig(config) {
   const file = getConfigPath(ROOT);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify(config, null, 2), 'utf8');
+}
+
+function readFileTail(file, maxBytes = 256 * 1024) {
+  if (!fs.existsSync(file)) return '';
+  const stat = fs.statSync(file);
+  const length = Math.min(stat.size, maxBytes);
+  const buffer = Buffer.alloc(length);
+  const fd = fs.openSync(file, 'r');
+  try {
+    fs.readSync(fd, buffer, 0, length, stat.size - length);
+  } finally {
+    fs.closeSync(fd);
+  }
+  return buffer.toString('utf8');
+}
+
+function extractLatestWeclawSender(text) {
+  let latest = null;
+  const pattern = /\[handler\]\s+received from\s+([^:\s]+@im\.wechat):/g;
+  for (const match of String(text || '').matchAll(pattern)) {
+    latest = match[1];
+  }
+  return latest;
+}
+
+function findLatestWeclawSender() {
+  const fromFile = extractLatestWeclawSender(readFileTail(WECLAW_LOG_FILE));
+  if (fromFile) return { to: fromFile, source: WECLAW_LOG_FILE };
+
+  const fromRuntime = extractLatestWeclawSender(runtimeLogs.join('\n'));
+  if (fromRuntime) return { to: fromRuntime, source: 'runtime logs' };
+
+  return null;
 }
 
 function loginScreenshotPath() {
@@ -393,6 +427,21 @@ async function handleApi(req, res) {
   if (req.method === 'POST' && url.pathname === '/api/weclaw/health') {
     try {
       return sendJson(res, 200, await checkWeclawHealth(readConfig()));
+    } catch (error) {
+      return sendJson(res, 500, { error: error.message });
+    }
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/weclaw/last-sender') {
+    try {
+      const sender = findLatestWeclawSender();
+      if (!sender) {
+        return sendJson(res, 404, {
+          error: '没有在 WeClaw 日志里找到最近发信人。先让接收通知的微信给机器人发一条消息，再点自动识别。',
+          logFile: WECLAW_LOG_FILE
+        });
+      }
+      return sendJson(res, 200, sender);
     } catch (error) {
       return sendJson(res, 500, { error: error.message });
     }
