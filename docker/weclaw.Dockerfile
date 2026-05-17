@@ -1,11 +1,9 @@
-FROM debian:bookworm-slim
+FROM alpine:3.20
 
 ARG TARGETARCH
 ARG WECLAW_VERSION=latest
 
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates curl \
-  && rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache ca-certificates curl
 
 RUN set -eu; \
   case "${TARGETARCH:-amd64}" in \
