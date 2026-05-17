@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "Monitor specific Weibo users through the user's local browser session.",
+  "license": "MIT",
   "main": "src/index.js",
   "type": "commonjs",
   "scripts": {
