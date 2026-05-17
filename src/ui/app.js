@@ -20,6 +20,23 @@ function escapeHtml(value) {
     .replace(/"/g, '&quot;');
 }
 
+function parseRecipients(value) {
+  const items = Array.isArray(value) ? value : String(value || '').split(/[\s,;，；]+/);
+  const seen = new Set();
+  const recipients = [];
+  for (const item of items.flatMap((entry) => String(entry || '').split(/[\s,;，；]+/))) {
+    const recipient = item.trim();
+    if (!recipient || seen.has(recipient)) continue;
+    seen.add(recipient);
+    recipients.push(recipient);
+  }
+  return recipients;
+}
+
+function getDisplayedRecipients(weclaw) {
+  return parseRecipients([weclaw.recipients || '', weclaw.to || '']);
+}
+
 function getWeclawConfig() {
   if (!config.notifications) config.notifications = {};
   if (!config.notifications.weclaw) {
@@ -27,6 +44,7 @@ function getWeclawConfig() {
       enabled: false,
       apiUrl: 'http://127.0.0.1:18011/api/send',
       to: '',
+      recipients: [],
       sendImages: true
     };
   }
@@ -100,7 +118,7 @@ function fillForm() {
   $('notifyWeclawEnabled').checked = Boolean(weclaw.enabled);
   $('notifyImages').checked = weclaw.sendImages !== false;
   $('weclawApiUrl').value = weclaw.apiUrl || 'http://127.0.0.1:18011/api/send';
-  $('weclawTo').value = weclaw.to || '';
+  $('weclawTo').value = getDisplayedRecipients(weclaw).join('\n');
   renderUsers();
 }
 
@@ -116,7 +134,8 @@ function collectForm() {
   weclaw.enabled = $('notifyWeclawEnabled').checked;
   weclaw.sendImages = $('notifyImages').checked;
   weclaw.apiUrl = $('weclawApiUrl').value.trim() || 'http://127.0.0.1:18011/api/send';
-  weclaw.to = $('weclawTo').value.trim();
+  weclaw.recipients = parseRecipients($('weclawTo').value);
+  weclaw.to = weclaw.recipients[0] || '';
 }
 
 async function saveConfig(showStatus = true) {
@@ -254,10 +273,15 @@ async function init() {
     $('weclawStatus').textContent = '正在读取 WeClaw 最近发信人...';
     try {
       const data = await api('/api/weclaw/last-sender');
-      $('weclawTo').value = data.to;
-      getWeclawConfig().to = data.to;
+      const recipients = parseRecipients($('weclawTo').value);
+      const existed = recipients.includes(data.to);
+      if (!existed) recipients.push(data.to);
+      $('weclawTo').value = recipients.join('\n');
+      const weclaw = getWeclawConfig();
+      weclaw.recipients = recipients;
+      weclaw.to = recipients[0] || '';
       await saveConfig(false);
-      $('weclawStatus').textContent = `已填入并保存接收人 ID：${data.to}`;
+      $('weclawStatus').textContent = existed ? `接收人 ID 已存在：${data.to}` : `已添加并保存接收人 ID：${data.to}`;
     } catch (error) {
       $('weclawStatus').textContent = error.message;
     }

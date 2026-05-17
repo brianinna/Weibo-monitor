@@ -3,10 +3,11 @@ const https = require('https');
 
 function getWeclawConfig(config) {
   const weclaw = config && config.notifications && config.notifications.weclaw;
-  return {
+  const merged = {
     enabled: false,
     apiUrl: 'http://127.0.0.1:18011/api/send',
     to: '',
+    recipients: [],
     sendImages: true,
     mediaHost: '127.0.0.1',
     mediaPort: 18789,
@@ -15,6 +16,29 @@ function getWeclawConfig(config) {
     startArgs: ['start', '-f'],
     ...(weclaw || {})
   };
+  merged.recipients = normalizeRecipients([...(asRecipientList(merged.recipients)), ...(asRecipientList(merged.to))]);
+  merged.to = merged.recipients[0] || '';
+  return merged;
+}
+
+function asRecipientList(value) {
+  if (Array.isArray(value)) return value.flatMap(asRecipientList);
+  return String(value || '')
+    .split(/[\s,;，；]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function normalizeRecipients(values) {
+  const seen = new Set();
+  const recipients = [];
+  for (const value of values || []) {
+    const recipient = String(value || '').trim();
+    if (!recipient || seen.has(recipient)) continue;
+    seen.add(recipient);
+    recipients.push(recipient);
+  }
+  return recipients;
 }
 
 function truncate(value, maxLength) {
@@ -110,14 +134,15 @@ function buildScreenshotUrl(post, weclaw, options = {}) {
 async function notifyResults(config, results, options = {}) {
   const log = options.log || (() => {});
   const weclaw = getWeclawConfig(config);
+  const recipients = weclaw.recipients;
   const summary = { sentPosts: 0, sentImages: 0, failedPosts: 0, failedImages: 0, skipped: false };
 
   if (!weclaw.enabled) {
     summary.skipped = true;
     return summary;
   }
-  if (!weclaw.to) {
-    log('WeClaw notification skipped: notifications.weclaw.to is empty');
+  if (recipients.length === 0) {
+    log('WeClaw notification skipped: notifications.weclaw.recipients is empty');
     summary.skipped = true;
     return summary;
   }
@@ -125,33 +150,34 @@ async function notifyResults(config, results, options = {}) {
   for (const result of results || []) {
     const fresh = Array.isArray(result.fresh) ? result.fresh.slice().reverse() : [];
     for (const post of fresh) {
-      try {
-        await sendWeclawPayload(weclaw, {
-          to: weclaw.to,
-          text: buildPostText(result.user || {}, post)
-        });
-        summary.sentPosts += 1;
-        log(`WeClaw text sent post=${post.id}`);
-      } catch (error) {
-        summary.failedPosts += 1;
-        log(`WeClaw text failed post=${post.id}: ${error.message}`);
-        continue;
-      }
-
-      if (weclaw.sendImages === false) continue;
       const mediaUrl = buildScreenshotUrl(post, weclaw, options);
-      if (!mediaUrl) continue;
+      for (const to of recipients) {
+        try {
+          await sendWeclawPayload(weclaw, {
+            to,
+            text: buildPostText(result.user || {}, post)
+          });
+          summary.sentPosts += 1;
+          log(`WeClaw text sent post=${post.id} to=${to}`);
+        } catch (error) {
+          summary.failedPosts += 1;
+          log(`WeClaw text failed post=${post.id} to=${to}: ${error.message}`);
+          continue;
+        }
 
-      try {
-        await sendWeclawPayload(weclaw, {
-          to: weclaw.to,
-          media_url: mediaUrl
-        });
-        summary.sentImages += 1;
-        log(`WeClaw image sent post=${post.id}`);
-      } catch (error) {
-        summary.failedImages += 1;
-        log(`WeClaw image failed post=${post.id}: ${error.message}`);
+        if (weclaw.sendImages === false || !mediaUrl) continue;
+
+        try {
+          await sendWeclawPayload(weclaw, {
+            to,
+            media_url: mediaUrl
+          });
+          summary.sentImages += 1;
+          log(`WeClaw image sent post=${post.id} to=${to}`);
+        } catch (error) {
+          summary.failedImages += 1;
+          log(`WeClaw image failed post=${post.id} to=${to}: ${error.message}`);
+        }
       }
     }
   }
@@ -161,12 +187,27 @@ async function notifyResults(config, results, options = {}) {
 
 async function sendWeclawTest(config, options = {}) {
   const weclaw = getWeclawConfig(config);
-  if (!weclaw.to) throw new Error('接收人 ID 为空。让接收通知的微信给机器人发一条消息后，点击“识别最近发信人”。');
-  await sendWeclawPayload(weclaw, {
-    to: weclaw.to,
-    text: options.text || `微博监控测试消息：${new Date().toLocaleString('zh-CN', { hour12: false })}`
-  });
-  return { ok: true };
+  const recipients = weclaw.recipients;
+  if (recipients.length === 0) throw new Error('接收人 ID 为空。让接收通知的微信给机器人发一条消息后，点击“识别最近发信人”。');
+
+  const failures = [];
+  let sent = 0;
+  for (const to of recipients) {
+    try {
+      await sendWeclawPayload(weclaw, {
+        to,
+        text: options.text || `微博监控测试消息：${new Date().toLocaleString('zh-CN', { hour12: false })}`
+      });
+      sent += 1;
+    } catch (error) {
+      failures.push(`${to}: ${error.message}`);
+    }
+  }
+
+  if (failures.length > 0) {
+    throw new Error(`测试消息发送失败：成功 ${sent}/${recipients.length}；${failures[0]}`);
+  }
+  return { ok: true, sentRecipients: sent };
 }
 
 module.exports = {
@@ -174,5 +215,6 @@ module.exports = {
   checkWeclawHealth,
   notifyResults,
   sendWeclawPayload,
-  sendWeclawTest
+  sendWeclawTest,
+  normalizeRecipients
 };

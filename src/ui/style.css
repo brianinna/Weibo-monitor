@@ -69,7 +69,8 @@ label {
 }
 
 input,
-select {
+select,
+textarea {
   height: 38px;
   padding: 0 10px;
   border: 1px solid #d0d5dd;
@@ -77,6 +78,13 @@ select {
   background: #fff;
   color: #111827;
   font-size: 14px;
+}
+
+textarea {
+  min-height: 86px;
+  padding-top: 9px;
+  resize: vertical;
+  line-height: 1.45;
 }
 
 button {

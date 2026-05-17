@@ -26,6 +26,7 @@
       "enabled": false,
       "apiUrl": "http://weclaw:18011/api/send",
       "to": "",
+      "recipients": [],
       "sendImages": true,
       "mediaBaseUrl": "http://weibo-monitor:18787",
       "mediaHost": "0.0.0.0",
