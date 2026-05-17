@@ -126,6 +126,12 @@ async function saveConfig() {
   $('loginStatus').textContent = '配置已保存';
 }
 
+function showLoginScreenshot(data) {
+  if (!data || !data.screenshotUrl) return;
+  $('loginShot').src = data.screenshotUrl;
+  $('loginShotBox').classList.remove('hidden');
+}
+
 async function loadProfiles() {
   const data = await api('/api/profiles');
   const select = $('profileSelect');
@@ -197,9 +203,17 @@ async function init() {
 
   $('openBrowserBtn').addEventListener('click', async () => {
     await saveConfig();
-    $('loginStatus').textContent = '正在打开浏览器...';
-    await api('/api/browser/open', { method: 'POST', body: '{}' });
-    $('loginStatus').textContent = '已打开微博，请登录后再检测';
+    $('loginStatus').textContent = '正在打开微博登录页并截图...';
+    const data = await api('/api/browser/open', { method: 'POST', body: '{}' });
+    showLoginScreenshot(data);
+    $('loginStatus').textContent = '已生成登录截图，扫码后点击检测登录';
+  });
+
+  $('refreshLoginShotBtn').addEventListener('click', async () => {
+    $('loginStatus').textContent = '正在刷新登录截图...';
+    const data = await api('/api/browser/open', { method: 'POST', body: '{}' });
+    showLoginScreenshot(data);
+    $('loginStatus').textContent = '登录截图已刷新';
   });
 
   $('checkLoginBtn').addEventListener('click', async () => {

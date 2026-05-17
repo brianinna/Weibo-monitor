@@ -43,6 +43,10 @@ header p,
   color: #667085;
 }
 
+.hidden {
+  display: none !important;
+}
+
 section {
   margin-top: 16px;
   padding: 20px;
@@ -160,6 +164,37 @@ button.secondary {
   object-fit: contain;
   border-top: 1px solid #e5e7eb;
   background: #f8fafc;
+}
+
+.login-shot {
+  margin-top: 14px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #f8fafc;
+}
+
+.login-shot-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid #e5e7eb;
+  color: #475467;
+  font-size: 13px;
+}
+
+.login-shot-head button {
+  height: 32px;
+}
+
+.login-shot img {
+  display: block;
+  width: 100%;
+  max-height: 720px;
+  object-fit: contain;
+  background: #111827;
 }
 
 .user-row span {

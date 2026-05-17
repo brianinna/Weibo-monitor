@@ -18,6 +18,7 @@ const PORT = Number(process.env.WEIBO_MONITOR_UI_PORT || 18787);
 const OPEN_BROWSER_ON_START = process.env.WEIBO_MONITOR_OPEN_BROWSER_ON_START !== '0';
 let browserSession = null;
 let pagePool = null;
+let loginPage = null;
 let monitorTimer = null;
 let monitorRunning = false;
 let weclawProcess = null;
@@ -76,6 +77,36 @@ function writeConfig(config) {
   const file = getConfigPath(ROOT);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify(config, null, 2), 'utf8');
+}
+
+function loginScreenshotPath() {
+  return path.join(ROOT, 'data', 'login-screenshot.png');
+}
+
+async function getLoginPage(config) {
+  const session = await getBrowserSession(config);
+  if (loginPage && !loginPage.isClosed()) return loginPage;
+  const existing = session.context.pages().find((page) => !page.isClosed());
+  loginPage = existing || await session.context.newPage();
+  return loginPage;
+}
+
+async function openLoginAndCapture(config) {
+  const page = await getLoginPage(config);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto(config.browser.loginUrl || 'https://weibo.com/', {
+    waitUntil: 'domcontentloaded',
+    timeout: 30000
+  });
+  await page.waitForTimeout(2500);
+
+  const file = loginScreenshotPath();
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  await page.screenshot({ path: file, fullPage: false, timeout: 12000 });
+  return {
+    url: page.url(),
+    screenshotUrl: `/api/browser/login-screenshot?t=${Date.now()}`
+  };
 }
 
 function uniquePosts(posts) {
@@ -279,6 +310,21 @@ async function handleApi(req, res) {
     return;
   }
 
+  if (req.method === 'GET' && url.pathname === '/api/browser/login-screenshot') {
+    const file = loginScreenshotPath();
+    if (!fs.existsSync(file)) {
+      res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
+      res.end('not found');
+      return;
+    }
+    res.writeHead(200, {
+      'content-type': 'image/png',
+      'cache-control': 'no-store'
+    });
+    fs.createReadStream(file).pipe(res);
+    return;
+  }
+
   if (req.method === 'POST' && url.pathname === '/api/config') {
     const body = await readBody(req);
     const config = readConfig();
@@ -336,12 +382,7 @@ async function handleApi(req, res) {
   if (req.method === 'POST' && url.pathname === '/api/browser/open') {
     try {
       const config = readConfig();
-      const session = await getBrowserSession(config);
-      const firstUser = config.users && config.users[0];
-      const targetUrl = firstUser && firstUser.id ? `https://weibo.com/${firstUser.id}` : config.browser.loginUrl;
-      const page = firstUser && firstUser.id ? await pagePool.getUserPage(firstUser.id) : await session.context.newPage();
-      await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-      return sendJson(res, 200, { ok: true });
+      return sendJson(res, 200, { ok: true, ...(await openLoginAndCapture(config)) });
     } catch (error) {
       return sendJson(res, 500, { error: error.message });
     }
