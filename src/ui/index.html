@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>微博监控配置</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header>
+        <div>
+          <h1>微博监控</h1>
+          <p>配置浏览器 Profile、登录状态和需要监控的微博用户。</p>
+        </div>
+        <button id="saveBtn">保存配置</button>
+      </header>
+
+      <section>
+        <h2>浏览器</h2>
+        <div class="grid">
+          <label>
+            浏览器
+            <select id="browserType">
+              <option value="auto">自动</option>
+              <option value="chrome">Chrome</option>
+              <option value="edge">Edge</option>
+            </select>
+          </label>
+          <label>
+            调试端口
+            <input id="debugPort" type="number" min="1024" max="65535" />
+          </label>
+          <label>
+            Profile 来源
+            <select id="profileSelect"></select>
+          </label>
+          <label>
+            Profile 目录名
+            <input id="profileDirectory" placeholder="Default / Profile 1" />
+          </label>
+        </div>
+        <div class="actions">
+          <button id="refreshProfilesBtn" class="secondary">刷新 Profile</button>
+          <button id="openBrowserBtn">打开微博登录页</button>
+          <button id="checkLoginBtn" class="secondary">检测登录</button>
+        </div>
+        <p id="profileHint" class="status">默认使用独立隔离目录，不影响日常 Chrome。首次使用需要在受控 Chrome 中登录一次微博。</p>
+        <p id="loginStatus" class="status">未检测</p>
+      </section>
+
+      <section>
+        <h2>监控用户</h2>
+        <div class="add-user">
+          <input id="userInput" placeholder="粘贴微博用户主页或直接填 UID" />
+          <input id="userName" placeholder="备注名，可选" />
+          <button id="addUserBtn">添加</button>
+        </div>
+        <div id="userList" class="list"></div>
+      </section>
+
+      <section id="localPostsSection">
+        <h2>本地微博库</h2>
+        <p id="localPostsTitle" class="status">选择一个监控用户查看本地已保存微博。</p>
+        <div id="localPosts" class="post-list"></div>
+      </section>
+
+      <section>
+        <h2>监控设置</h2>
+        <div class="grid">
+          <label>
+            检查间隔（秒）
+            <input id="interval" type="number" min="30" />
+          </label>
+          <label>
+            每个用户读取条数
+            <input id="maxPosts" type="number" min="1" max="20" />
+          </label>
+          <label>
+            最大扫描页数
+            <input id="maxScanPages" type="number" min="1" max="20" />
+          </label>
+          <label class="checkbox">
+            <input id="notifyFirst" type="checkbox" />
+            首次运行也提示历史微博
+          </label>
+        </div>
+        <div class="actions">
+          <button id="checkNowBtn">立即检查一次</button>
+          <button id="showLogsBtn" class="secondary">查看日志</button>
+        </div>
+        <pre id="checkResult"></pre>
+      </section>
+
+      <section>
+        <h2>微信通知</h2>
+        <div class="grid">
+          <label class="checkbox">
+            <input id="notifyWeclawEnabled" type="checkbox" />
+            启用 WeClaw 通知
+          </label>
+          <label class="checkbox">
+            <input id="notifyImages" type="checkbox" />
+            发送微博截图
+          </label>
+          <label>
+            WeClaw API
+            <input id="weclawApiUrl" placeholder="http://127.0.0.1:18011/api/send" />
+          </label>
+          <label>
+            接收人 ID
+            <input id="weclawTo" placeholder="user_id@im.wechat" />
+          </label>
+        </div>
+        <div class="actions">
+          <button id="startWeclawBtn">启动/扫码登录</button>
+          <button id="checkWeclawBtn" class="secondary">检测连接</button>
+          <button id="testNotifyBtn" class="secondary">发送测试</button>
+        </div>
+        <p id="weclawStatus" class="status">未检测</p>
+      </section>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>

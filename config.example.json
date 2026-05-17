@@ -1,0 +1,40 @@
+{
+  "browser": {
+    "type": "chrome",
+    "executablePath": null,
+    "remoteDebuggingPort": 18788,
+    "profileDirectory": "Default",
+    "userDataDir": "%LOCALAPPDATA%\\WeiboMonitor\\ChromeProfile",
+    "loginUrl": "https://weibo.com/",
+    "startupTimeoutMs": 15000,
+    "headless": false,
+    "args": []
+  },
+  "monitor": {
+    "checkIntervalSeconds": 300,
+    "notifyOnFirstRun": false,
+    "maxPostsPerUser": 5,
+    "maxScanPages": 3
+  },
+  "notifications": {
+    "weclaw": {
+      "enabled": false,
+      "apiUrl": "http://127.0.0.1:18011/api/send",
+      "to": "",
+      "sendImages": true,
+      "mediaBaseUrl": "",
+      "mediaHost": "127.0.0.1",
+      "mediaPort": 18789,
+      "managedBy": "",
+      "command": "weclaw",
+      "startArgs": ["start", "-f"]
+    }
+  },
+  "users": [
+    {
+      "id": "1223178222",
+      "name": "example",
+      "url": "https://m.weibo.cn/u/1223178222"
+    }
+  ]
+}

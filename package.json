@@ -1,0 +1,19 @@
+{
+  "name": "weibo-monitor",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Monitor specific Weibo users through the user's local browser session.",
+  "main": "src/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "init": "node src/index.js init",
+    "monitor": "node src/index.js monitor",
+    "check": "node src/index.js check",
+    "ui": "node src/server.js",
+    "build:portable": "powershell -ExecutionPolicy Bypass -File scripts/build-portable.ps1"
+  },
+  "dependencies": {
+    "playwright-core": "^1.56.1"
+  },
+  "devDependencies": {}
+}

@@ -1,0 +1,34 @@
+services:
+  weibo-monitor:
+    build: .
+    image: weibo-monitor:local
+    container_name: weibo-monitor
+    restart: unless-stopped
+    depends_on:
+      - weclaw
+    shm_size: "1gb"
+    environment:
+      WEIBO_MONITOR_CONFIG: /app/data/config.json
+      WEIBO_MONITOR_CONFIG_TEMPLATE: /app/config.docker.example.json
+      WEIBO_MONITOR_UI_HOST: 0.0.0.0
+      WEIBO_MONITOR_UI_PORT: "18787"
+      WEIBO_MONITOR_OPEN_BROWSER_ON_START: "0"
+      WEIBO_MONITOR_NOVNC_PORT: "18790"
+      DISPLAY: ":99"
+    volumes:
+      - ./docker-data/weibo-monitor:/app/data
+    ports:
+      - "127.0.0.1:18787:18787"
+      - "127.0.0.1:18790:18790"
+
+  weclaw:
+    image: ghcr.io/fastclaw-ai/weclaw:latest
+    container_name: weclaw
+    restart: unless-stopped
+    command: ["start", "-f", "--api-addr", "0.0.0.0:18011"]
+    environment:
+      WECLAW_API_ADDR: 0.0.0.0:18011
+    volumes:
+      - ./docker-data/weclaw:/root/.weclaw
+    expose:
+      - "18011"
