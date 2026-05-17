@@ -22,7 +22,10 @@ services:
       - "127.0.0.1:18790:18790"
 
   weclaw:
-    image: ghcr.io/fastclaw-ai/weclaw:latest
+    build:
+      context: .
+      dockerfile: docker/weclaw.Dockerfile
+    image: weclaw:local
     container_name: weclaw
     restart: unless-stopped
     command: ["start", "-f", "--api-addr", "0.0.0.0:18011"]

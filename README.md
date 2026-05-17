@@ -48,7 +48,7 @@ http://127.0.0.1:18011/api/send
 推荐 Linux 服务器使用 Docker Compose 部署。Compose 会启动两个容器：
 
 - `weibo-monitor`：内置 Chromium、Xvfb 和 noVNC，不依赖宿主机安装 Chrome。
-- `weclaw`：使用 `ghcr.io/fastclaw-ai/weclaw:latest`，负责微信扫码登录和发送消息。
+- `weclaw`：从 WeClaw 官方 GitHub release 构建本地镜像，负责微信扫码登录和发送消息。
 
 启动：
 

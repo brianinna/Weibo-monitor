@@ -1,0 +1,26 @@
+FROM debian:bookworm-slim
+
+ARG TARGETARCH
+ARG WECLAW_VERSION=latest
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates curl \
+  && rm -rf /var/lib/apt/lists/*
+
+RUN set -eu; \
+  case "${TARGETARCH:-amd64}" in \
+    amd64) arch="amd64" ;; \
+    arm64) arch="arm64" ;; \
+    *) echo "Unsupported TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
+  esac; \
+  if [ "$WECLAW_VERSION" = "latest" ]; then \
+    version="$(curl -fsSL -H "User-Agent: weibo-monitor-docker" https://api.github.com/repos/fastclaw-ai/weclaw/releases/latest | sed -n 's/.*"tag_name" *: *"\([^"]*\)".*/\1/p')"; \
+  else \
+    version="$WECLAW_VERSION"; \
+  fi; \
+  test -n "$version"; \
+  curl -fsSL -o /usr/local/bin/weclaw "https://github.com/fastclaw-ai/weclaw/releases/download/${version}/weclaw_linux_${arch}"; \
+  chmod +x /usr/local/bin/weclaw; \
+  weclaw --help >/dev/null
+
+ENTRYPOINT ["weclaw"]
