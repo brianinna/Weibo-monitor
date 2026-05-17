@@ -1,4 +1,4 @@
-ARG NODE_IMAGE=registry.cn-hangzhou.aliyuncs.com/library/node:20-bookworm-slim
+ARG NODE_IMAGE=m.daocloud.io/docker.io/library/node:20-bookworm-slim
 FROM ${NODE_IMAGE}
 
 ENV DEBIAN_FRONTEND=noninteractive

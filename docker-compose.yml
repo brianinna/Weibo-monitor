@@ -3,7 +3,7 @@ services:
     build:
       context: .
       args:
-        NODE_IMAGE: registry.cn-hangzhou.aliyuncs.com/library/node:20-bookworm-slim
+        NODE_IMAGE: ${NODE_IMAGE:-m.daocloud.io/docker.io/library/node:20-bookworm-slim}
     image: weibo-monitor:local
     container_name: weibo-monitor
     restart: unless-stopped
@@ -29,7 +29,7 @@ services:
       context: .
       dockerfile: docker/weclaw.Dockerfile
       args:
-        ALPINE_IMAGE: registry.cn-hangzhou.aliyuncs.com/library/alpine:3.20
+        ALPINE_IMAGE: ${ALPINE_IMAGE:-m.daocloud.io/docker.io/library/alpine:3.20}
     image: weclaw:local
     container_name: weclaw
     restart: unless-stopped

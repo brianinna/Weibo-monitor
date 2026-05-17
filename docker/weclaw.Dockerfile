@@ -1,4 +1,4 @@
-ARG ALPINE_IMAGE=registry.cn-hangzhou.aliyuncs.com/library/alpine:3.20
+ARG ALPINE_IMAGE=m.daocloud.io/docker.io/library/alpine:3.20
 FROM ${ALPINE_IMAGE}
 
 ARG TARGETARCH
