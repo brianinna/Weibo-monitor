@@ -20,12 +20,13 @@ function removeStaleBrowserLocks(userDataDir, log) {
   for (const name of ['SingletonLock', 'SingletonSocket', 'SingletonCookie']) {
     const target = path.join(userDataDir, name);
     try {
-      if (fs.existsSync(target)) {
-        fs.rmSync(target, { force: true, recursive: true });
-        log(`Removed stale browser lock: ${target}`);
-      }
+      fs.lstatSync(target);
+      fs.rmSync(target, { force: true, recursive: true });
+      log(`Removed stale browser lock: ${target}`);
     } catch (error) {
-      log(`Could not remove stale browser lock ${target}: ${error.message}`);
+      if (error.code !== 'ENOENT') {
+        log(`Could not remove stale browser lock ${target}: ${error.message}`);
+      }
     }
   }
 }
