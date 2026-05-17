@@ -1,9 +1,11 @@
-FROM alpine:3.20
+ARG ALPINE_IMAGE=registry.cn-hangzhou.aliyuncs.com/library/alpine:3.20
+FROM ${ALPINE_IMAGE}
 
 ARG TARGETARCH
 ARG WECLAW_VERSION=latest
 
-RUN apk add --no-cache ca-certificates curl
+RUN sed -i 's|https\?://dl-cdn.alpinelinux.org/alpine|https://mirrors.aliyun.com/alpine|g' /etc/apk/repositories \
+  && apk add --no-cache ca-certificates curl
 
 RUN set -eu; \
   case "${TARGETARCH:-amd64}" in \

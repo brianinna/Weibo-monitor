@@ -1,8 +1,13 @@
-FROM node:20-bookworm-slim
+ARG NODE_IMAGE=registry.cn-hangzhou.aliyuncs.com/library/node:20-bookworm-slim
+FROM ${NODE_IMAGE}
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update \
+RUN sed -i \
+    -e 's|http://deb.debian.org/debian|http://mirrors.aliyun.com/debian|g' \
+    -e 's|http://security.debian.org/debian-security|http://mirrors.aliyun.com/debian-security|g' \
+    /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true \
+  && apt-get update \
   && apt-get install -y --no-install-recommends \
     ca-certificates \
     chromium \

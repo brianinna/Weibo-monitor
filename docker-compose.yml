@@ -1,6 +1,9 @@
 services:
   weibo-monitor:
-    build: .
+    build:
+      context: .
+      args:
+        NODE_IMAGE: registry.cn-hangzhou.aliyuncs.com/library/node:20-bookworm-slim
     image: weibo-monitor:local
     container_name: weibo-monitor
     restart: unless-stopped
@@ -25,6 +28,8 @@ services:
     build:
       context: .
       dockerfile: docker/weclaw.Dockerfile
+      args:
+        ALPINE_IMAGE: registry.cn-hangzhou.aliyuncs.com/library/alpine:3.20
     image: weclaw:local
     container_name: weclaw
     restart: unless-stopped
