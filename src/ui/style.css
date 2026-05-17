@@ -185,12 +185,17 @@ button.secondary {
 
 .weclaw-binding {
   display: grid;
-  grid-template-columns: 120px 1fr 1fr;
+  grid-template-columns: 120px minmax(0, 1fr) minmax(0, 1fr);
   gap: 10px;
   padding: 12px;
   border: 1px solid #e5e7eb;
   border-radius: 8px;
   background: #f8fafc;
+}
+
+.weclaw-binding > .checkbox {
+  grid-row: span 2;
+  align-self: start;
 }
 
 .weclaw-binding .binding-actions {
@@ -202,6 +207,49 @@ button.secondary {
 
 .weclaw-binding .checkbox {
   padding-top: 22px;
+}
+
+.qr-panel {
+  display: grid;
+  grid-template-columns: 360px minmax(0, 1fr);
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.qr-card {
+  display: grid;
+  justify-items: center;
+  align-content: start;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.qr-card img {
+  width: min(320px, 100%);
+  height: auto;
+  image-rendering: pixelated;
+  background: #fff;
+  border: 8px solid #fff;
+  border-radius: 6px;
+}
+
+.qr-card a {
+  color: #2563eb;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+#weclawQrLog {
+  min-height: 0;
+  max-height: 460px;
+  margin: 0;
+  white-space: pre;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 13px;
+  line-height: 1.45;
 }
 
 .login-shot {
@@ -272,8 +320,13 @@ pre {
 
   .grid,
   .user-row,
-  .weclaw-binding {
+  .weclaw-binding,
+  .qr-panel {
     grid-template-columns: 1fr;
+  }
+
+  .weclaw-binding > .checkbox {
+    grid-row: auto;
   }
 
   .add-user input:nth-child(2) {

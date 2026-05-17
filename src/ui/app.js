@@ -140,8 +140,18 @@ function renderWeclawBindings() {
       $('weclawStatus').textContent = `正在读取 ${current.name} 的扫码日志...`;
       try {
         const data = await api(`/api/weclaw/log-tail?logFile=${encodeURIComponent(current.logFile)}`);
-        $('weclawQrLog').classList.remove('hidden');
+        $('weclawQrPanel').classList.remove('hidden');
         $('weclawQrLog').textContent = data.log || '日志为空。如果这是新实例，等几秒后再刷新扫码日志。';
+        if (data.qrImage) {
+          $('weclawQrImage').src = data.qrImage;
+          $('weclawQrImage').classList.remove('hidden');
+          $('weclawQrLink').href = data.qrUrl;
+          $('weclawQrLink').classList.remove('hidden');
+        } else {
+          $('weclawQrImage').removeAttribute('src');
+          $('weclawQrImage').classList.add('hidden');
+          $('weclawQrLink').classList.add('hidden');
+        }
         $('weclawStatus').textContent = `已读取 ${current.name} 的扫码日志`;
       } catch (error) {
         $('weclawStatus').textContent = error.message;

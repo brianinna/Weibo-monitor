@@ -121,7 +121,13 @@
           <button id="testNotifyBtn" class="secondary">发送测试</button>
         </div>
         <p id="weclawStatus" class="status">未检测</p>
-        <pre id="weclawQrLog" class="hidden"></pre>
+        <div id="weclawQrPanel" class="qr-panel hidden">
+          <div class="qr-card">
+            <img id="weclawQrImage" alt="WeClaw 登录二维码" />
+            <a id="weclawQrLink" href="#" target="_blank" rel="noreferrer">打开二维码链接</a>
+          </div>
+          <pre id="weclawQrLog"></pre>
+        </div>
       </section>
     </main>
     <script src="/app.js"></script>

@@ -2,6 +2,7 @@ const fs = require('fs');
 const http = require('http');
 const path = require('path');
 const { spawn } = require('child_process');
+const QRCode = require('qrcode');
 const { getConfigPath, loadConfig, ensureConfig } = require('./lib/config');
 const { listProfiles, connectBrowser } = require('./lib/browser');
 const { WeiboClient } = require('./lib/weibo');
@@ -99,6 +100,36 @@ function stripAnsi(text) {
   return String(text || '').replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '');
 }
 
+function extractLatestQrUrl(text) {
+  let latest = '';
+  const pattern = /QR URL:\s*(https?:\/\/\S+)/g;
+  for (const match of String(text || '').matchAll(pattern)) {
+    latest = match[1];
+  }
+  return latest;
+}
+
+function compactWeclawLog(text) {
+  const lines = stripAnsi(text).split(/\r?\n/);
+  const compact = [];
+  let skippingTerminalQr = false;
+  for (const line of lines) {
+    if (/Scan this QR code with WeChat:/i.test(line)) {
+      compact.push(line);
+      skippingTerminalQr = true;
+      continue;
+    }
+    if (/QR URL:/i.test(line)) {
+      compact.push(line);
+      skippingTerminalQr = false;
+      continue;
+    }
+    if (skippingTerminalQr) continue;
+    compact.push(line);
+  }
+  return compact.join('\n').trim();
+}
+
 function resolveWeclawLogFile(input) {
   const logDir = path.resolve(WECLAW_LOG_DIR);
   const requested = input ? String(input) : WECLAW_LOG_FILE;
@@ -129,11 +160,21 @@ function findLatestWeclawSender(logFile) {
   return null;
 }
 
-function readWeclawLogTail(logFile) {
+async function readWeclawLogTail(logFile) {
   const resolvedLogFile = resolveWeclawLogFile(logFile);
+  const rawLog = readFileTail(resolvedLogFile, 32 * 1024);
+  const qrUrl = extractLatestQrUrl(rawLog);
   return {
     logFile: resolvedLogFile,
-    log: stripAnsi(readFileTail(resolvedLogFile, 32 * 1024))
+    log: compactWeclawLog(rawLog),
+    qrUrl,
+    qrImage: qrUrl
+      ? await QRCode.toDataURL(qrUrl, {
+          errorCorrectionLevel: 'M',
+          margin: 2,
+          width: 320
+        })
+      : ''
   };
 }
 
@@ -475,7 +516,7 @@ async function handleApi(req, res) {
 
   if (req.method === 'GET' && url.pathname === '/api/weclaw/log-tail') {
     try {
-      return sendJson(res, 200, readWeclawLogTail(url.searchParams.get('logFile')));
+      return sendJson(res, 200, await readWeclawLogTail(url.searchParams.get('logFile')));
     } catch (error) {
       return sendJson(res, 500, { error: error.message });
     }
