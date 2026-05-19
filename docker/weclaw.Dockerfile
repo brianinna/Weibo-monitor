@@ -3,9 +3,12 @@ FROM ${ALPINE_IMAGE}
 
 ARG TARGETARCH
 ARG WECLAW_VERSION=latest
+ENV TZ=Asia/Shanghai
 
 RUN sed -i 's|https\?://dl-cdn.alpinelinux.org/alpine|https://mirrors.aliyun.com/alpine|g' /etc/apk/repositories \
-  && apk add --no-cache ca-certificates curl
+  && apk add --no-cache ca-certificates curl tzdata \
+  && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime \
+  && echo $TZ > /etc/timezone
 
 RUN set -eu; \
   case "${TARGETARCH:-amd64}" in \

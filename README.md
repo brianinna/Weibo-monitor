@@ -56,6 +56,8 @@ http://127.0.0.1:18011/api/send
 docker compose up -d --build
 ```
 
+Docker 配置默认使用上海时区 `Asia/Shanghai`，并会把 Chromium 页面时区也覆盖为上海时间。
+
 默认端口只绑定到服务器本机 `127.0.0.1`。在本地电脑通过 SSH 隧道访问：
 
 ```bash
@@ -91,6 +93,14 @@ docker-data/weibo-monitor
 docker-data/weclaw
 docker-data/weclaw-2
 docker-data/weclaw-logs
+```
+
+服务器重启后，只要 Docker 服务是开机自启，`restart: unless-stopped` 会自动拉起这些容器。可以用下面命令确认：
+
+```bash
+systemctl enable --now docker
+cd ~/Weibo-monitor
+docker compose ps
 ```
 
 不要把 WeClaw API 直接暴露到公网；它可以主动发送微信消息。需要远程访问时优先使用 SSH 隧道或带认证的反向代理。

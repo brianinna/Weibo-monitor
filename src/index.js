@@ -6,12 +6,12 @@ const { WeiboClient } = require('./lib/weibo');
 const { StateStore } = require('./lib/state');
 const { getWeclawConfig, notifyMonitorError, notifyResults } = require('./lib/notifier');
 const { startScreenshotServer } = require('./lib/screenshotServer');
+const { formatTimestamp } = require('./lib/time');
 
 const ROOT = path.resolve(__dirname, '..');
 
 function log(message) {
-  const now = new Date().toISOString();
-  console.log(`[${now}] ${message}`);
+  console.log(`[${formatTimestamp()}] ${message}`);
 }
 
 function uniquePosts(posts) {

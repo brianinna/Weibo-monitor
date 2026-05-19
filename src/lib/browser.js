@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 const { chromium } = require('playwright-core');
+const { getTimeZone } = require('./time');
 
 function expandEnv(input) {
   if (!input) return input;
@@ -198,9 +199,32 @@ async function waitForDebugPort(port, timeoutMs) {
   throw new Error(`Timed out waiting for browser debug port ${port}: ${lastError ? lastError.message : 'unknown'}`);
 }
 
+async function applyPageTimezone(page, timezoneId, log) {
+  if (!timezoneId || page.isClosed()) return;
+  try {
+    const session = await page.context().newCDPSession(page);
+    await session.send('Emulation.setTimezoneOverride', { timezoneId });
+    await session.detach().catch(() => {});
+  } catch (error) {
+    log(`Could not set browser timezone ${timezoneId}: ${error.message}`);
+  }
+}
+
+function applyContextTimezone(context, timezoneId, log) {
+  if (!timezoneId) return;
+  for (const page of context.pages()) {
+    applyPageTimezone(page, timezoneId, log);
+  }
+  context.on('page', (page) => {
+    applyPageTimezone(page, timezoneId, log);
+  });
+  log(`Browser timezone override: ${timezoneId}`);
+}
+
 async function connectBrowser(browserConfig = {}, log = () => {}) {
   const port = Number(browserConfig.remoteDebuggingPort || 18788);
   const startupTimeoutMs = Number(browserConfig.startupTimeoutMs || 15000);
+  const timezoneId = browserConfig.timezoneId || getTimeZone();
 
   try {
     const version = await waitForDebugPort(port, 800);
@@ -248,6 +272,7 @@ async function connectBrowser(browserConfig = {}, log = () => {}) {
       const child = spawn(executable, args, {
         detached: process.platform === 'win32',
         stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env, TZ: timezoneId },
         windowsHide: process.platform === 'win32' ? false : undefined
       });
       if (child.stdout) child.stdout.on('data', (chunk) => log(`[browser:out] ${String(chunk).trim()}`));
@@ -277,6 +302,7 @@ async function connectBrowser(browserConfig = {}, log = () => {}) {
   const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
   const contexts = browser.contexts();
   const context = contexts[0] || await browser.newContext();
+  applyContextTimezone(context, timezoneId, log);
 
   return {
     browser,

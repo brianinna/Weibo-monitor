@@ -11,6 +11,7 @@ const { StateStore } = require('./lib/state');
 const { PagePool } = require('./lib/pagePool');
 const { serveScreenshot } = require('./lib/screenshotServer');
 const { checkWeclawBindingHealth, checkWeclawHealth, getWeclawConfig, normalizeBinding, notifyMonitorError, notifyResults, sendWeclawTest } = require('./lib/notifier');
+const { formatTimestamp } = require('./lib/time');
 
 const ROOT = path.resolve(__dirname, '..');
 const UI_ROOT = path.join(ROOT, 'src', 'ui');
@@ -29,7 +30,7 @@ let weclawProcess = null;
 const runtimeLogs = [];
 
 function addLog(message) {
-  const line = `[${new Date().toISOString()}] ${message}`;
+  const line = `[${formatTimestamp()}] ${message}`;
   runtimeLogs.push(line);
   if (runtimeLogs.length > 300) runtimeLogs.shift();
   console.log(line);

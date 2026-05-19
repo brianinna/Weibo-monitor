@@ -6,6 +6,7 @@
     "profileDirectory": "Default",
     "userDataDir": "%LOCALAPPDATA%\\WeiboMonitor\\ChromeProfile",
     "loginUrl": "https://passport.weibo.com/sso/signin?entry=miniblog&source=miniblog&disp=popup&url=https%3A%2F%2Fweibo.com%2F",
+    "timezoneId": "Asia/Shanghai",
     "startupTimeoutMs": 15000,
     "headless": false,
     "args": []

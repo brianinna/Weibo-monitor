@@ -1,5 +1,6 @@
 const http = require('http');
 const https = require('https');
+const { formatTimestamp } = require('./time');
 
 function splitIds(value) {
   if (Array.isArray(value)) return value.flatMap(splitIds);
@@ -107,7 +108,7 @@ function buildMonitorErrorText(error, options = {}) {
   const message = lines[0] || 'Unknown error';
   const details = lines.slice(0, 12).join('\n');
   const parts = ['【微博监控异常】'];
-  parts.push(`时间：${new Date().toLocaleString('zh-CN', { hour12: false })}`);
+  parts.push(`时间：${formatTimestamp()}`);
   if (options.reason) parts.push(`触发：${options.reason}`);
   parts.push(`错误：${message}`);
   if (details) parts.push(`详情：\n${truncate(details, 1600)}`);
@@ -317,7 +318,7 @@ async function sendWeclawTest(config, options = {}) {
     try {
       await sendWeclawPayload(binding, {
         to: binding.to,
-        text: options.text || `微博监控测试消息：${new Date().toLocaleString('zh-CN', { hour12: false })}`
+        text: options.text || `微博监控测试消息：${formatTimestamp()}`
       });
       sent += 1;
     } catch (error) {

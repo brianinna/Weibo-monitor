@@ -1,7 +1,8 @@
 ARG NODE_IMAGE=m.daocloud.io/docker.io/library/node:20-bookworm-slim
 FROM ${NODE_IMAGE}
 
-ENV DEBIAN_FRONTEND=noninteractive
+ENV DEBIAN_FRONTEND=noninteractive \
+  TZ=Asia/Shanghai
 
 RUN sed -i \
     -e 's|http://deb.debian.org/debian|http://mirrors.aliyun.com/debian|g' \
@@ -15,9 +16,12 @@ RUN sed -i \
     fonts-noto-cjk \
     fonts-noto-color-emoji \
     novnc \
+    tzdata \
     websockify \
     x11vnc \
     xvfb \
+  && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime \
+  && echo $TZ > /etc/timezone \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -32,6 +36,7 @@ COPY docker ./docker
 RUN chmod +x /app/docker/entrypoint.sh
 
 ENV DISPLAY=:99 \
+  TZ=Asia/Shanghai \
   WEIBO_MONITOR_CONFIG=/app/data/config.json \
   WEIBO_MONITOR_CONFIG_TEMPLATE=/app/config.docker.example.json \
   WEIBO_MONITOR_UI_HOST=0.0.0.0 \

@@ -28,6 +28,7 @@ function loadConfig(root) {
     profileDirectory: 'Default',
     userDataDir: '%LOCALAPPDATA%\\WeiboMonitor\\ChromeProfile',
     loginUrl: 'https://weibo.com/',
+    timezoneId: process.env.WEIBO_MONITOR_TIME_ZONE || process.env.TZ || 'Asia/Shanghai',
     startupTimeoutMs: 15000,
     headless: false,
     args: [],

@@ -12,6 +12,8 @@ services:
       - weclaw-2
     shm_size: "1gb"
     environment:
+      TZ: Asia/Shanghai
+      WEIBO_MONITOR_TIME_ZONE: Asia/Shanghai
       WEIBO_MONITOR_CONFIG: /app/data/config.json
       WEIBO_MONITOR_CONFIG_TEMPLATE: /app/config.docker.example.json
       WEIBO_MONITOR_UI_HOST: 0.0.0.0
@@ -44,6 +46,7 @@ services:
     restart: unless-stopped
     command: ["start", "-f", "--api-addr", "0.0.0.0:18011"]
     environment:
+      TZ: Asia/Shanghai
       WECLAW_API_ADDR: 0.0.0.0:18011
       WECLAW_LOG_FILE: /var/log/weclaw/weclaw.log
     volumes:
@@ -63,6 +66,7 @@ services:
     restart: unless-stopped
     command: ["start", "-f", "--api-addr", "0.0.0.0:18011"]
     environment:
+      TZ: Asia/Shanghai
       WECLAW_API_ADDR: 0.0.0.0:18011
       WECLAW_LOG_FILE: /var/log/weclaw/weclaw-2.log
     volumes:
