@@ -16,6 +16,7 @@ function normalizeBinding(binding, defaults = {}, index = 0) {
     apiUrl: defaults.apiUrl || 'http://127.0.0.1:18011/api/send',
     to: '',
     logFile: defaults.logFile || '',
+    dataDir: defaults.dataDir || '',
     ...(binding || {})
   };
   const ids = splitIds(merged.to || merged.recipient || merged.recipients);
@@ -28,7 +29,8 @@ function normalizeBinding(binding, defaults = {}, index = 0) {
 function getWeclawBindings(weclaw) {
   const defaults = {
     apiUrl: weclaw.apiUrl || 'http://127.0.0.1:18011/api/send',
-    logFile: weclaw.logFile || ''
+    logFile: weclaw.logFile || '',
+    dataDir: weclaw.dataDir || ''
   };
   const configured = Array.isArray(weclaw.bindings) ? weclaw.bindings : [];
   if (configured.length > 0) {

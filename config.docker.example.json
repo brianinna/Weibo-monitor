@@ -32,14 +32,16 @@
           "enabled": true,
           "apiUrl": "http://weclaw:18011/api/send",
           "to": "",
-          "logFile": "/app/weclaw-logs/weclaw.log"
+          "logFile": "/app/weclaw-logs/weclaw.log",
+          "dataDir": "/app/weclaw-data/weclaw"
         },
         {
           "name": "weclaw-2",
           "enabled": false,
           "apiUrl": "http://weclaw-2:18011/api/send",
           "to": "",
-          "logFile": "/app/weclaw-logs/weclaw-2.log"
+          "logFile": "/app/weclaw-logs/weclaw-2.log",
+          "dataDir": "/app/weclaw-data/weclaw-2"
         }
       ],
       "adminBindingName": "",

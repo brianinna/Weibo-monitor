@@ -19,6 +19,7 @@ const PORT = Number(process.env.WEIBO_MONITOR_UI_PORT || 18787);
 const OPEN_BROWSER_ON_START = process.env.WEIBO_MONITOR_OPEN_BROWSER_ON_START !== '0';
 const WECLAW_LOG_FILE = process.env.WEIBO_MONITOR_WECLAW_LOG || path.join(ROOT, 'data', 'weclaw.log');
 const WECLAW_LOG_DIR = process.env.WEIBO_MONITOR_WECLAW_LOG_DIR || path.dirname(WECLAW_LOG_FILE);
+const WECLAW_DATA_DIR = process.env.WEIBO_MONITOR_WECLAW_DATA_DIR || path.join(ROOT, 'data', 'weclaw-data');
 let browserSession = null;
 let pagePool = null;
 let loginPage = null;
@@ -160,6 +161,41 @@ function resolveWeclawLogFile(input) {
     throw new Error('Invalid WeClaw log file path.');
   }
   return resolved;
+}
+
+function resolveWeclawDataDir(input, name) {
+  const dataRoot = path.resolve(WECLAW_DATA_DIR);
+  const fallbackName = String(name || 'weclaw').replace(/[^a-zA-Z0-9_.-]/g, '_');
+  const requested = input ? String(input) : fallbackName;
+  const resolved = path.isAbsolute(requested) ? path.resolve(requested) : path.resolve(dataRoot, requested);
+  if (resolved === dataRoot || !resolved.startsWith(`${dataRoot}${path.sep}`)) {
+    throw new Error('Invalid WeClaw data directory path.');
+  }
+  return resolved;
+}
+
+function clearDirectoryContents(dir) {
+  fs.mkdirSync(dir, { recursive: true });
+  for (const entry of fs.readdirSync(dir)) {
+    fs.rmSync(path.join(dir, entry), { recursive: true, force: true });
+  }
+}
+
+function clearWeclawBindingData(binding) {
+  const normalized = normalizeBinding(binding || {});
+  const safeName = String(normalized.name || 'weclaw').replace(/[^a-zA-Z0-9_.-]/g, '_');
+  const dataDir = resolveWeclawDataDir(normalized.dataDir || safeName, safeName);
+  const logFile = resolveWeclawLogFile(normalized.logFile || `${safeName}.log`);
+  clearDirectoryContents(dataDir);
+  fs.mkdirSync(path.dirname(logFile), { recursive: true });
+  fs.writeFileSync(logFile, '', 'utf8');
+  return {
+    ok: true,
+    name: normalized.name,
+    dataDir,
+    logFile,
+    message: `已清空 ${normalized.name || 'WeClaw'} 的登录数据和日志。请重启对应 WeClaw 容器后重新扫码。`
+  };
 }
 
 function extractLatestWeclawSender(text) {
@@ -549,6 +585,15 @@ async function handleApi(req, res) {
   if (req.method === 'GET' && url.pathname === '/api/weclaw/log-tail') {
     try {
       return sendJson(res, 200, await readWeclawLogTail(url.searchParams.get('logFile')));
+    } catch (error) {
+      return sendJson(res, 500, { error: error.message });
+    }
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/weclaw/delete-binding') {
+    try {
+      const body = await readBody(req);
+      return sendJson(res, 200, clearWeclawBindingData(body.binding));
     } catch (error) {
       return sendJson(res, 500, { error: error.message });
     }

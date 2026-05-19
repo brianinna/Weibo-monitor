@@ -26,7 +26,8 @@ function defaultWeclawBinding(index = 0) {
     enabled: index === 0,
     apiUrl: index === 0 ? 'http://weclaw:18011/api/send' : `http://weclaw-${index + 1}:18011/api/send`,
     to: '',
-    logFile: index === 0 ? '/app/weclaw-logs/weclaw.log' : `/app/weclaw-logs/weclaw-${index + 1}.log`
+    logFile: index === 0 ? '/app/weclaw-logs/weclaw.log' : `/app/weclaw-logs/weclaw-${index + 1}.log`,
+    dataDir: index === 0 ? '/app/weclaw-data/weclaw' : `/app/weclaw-data/weclaw-${index + 1}`
   };
 }
 
@@ -89,7 +90,8 @@ function collectBindingFromRow(row) {
     enabled: row.querySelector('[data-field="enabled"]').checked,
     apiUrl: row.querySelector('[data-field="apiUrl"]').value.trim(),
     to: row.querySelector('[data-field="to"]').value.trim(),
-    logFile: row.querySelector('[data-field="logFile"]').value.trim()
+    logFile: row.querySelector('[data-field="logFile"]').value.trim(),
+    dataDir: row.querySelector('[data-field="dataDir"]').value.trim()
   };
 }
 
@@ -159,12 +161,16 @@ function renderWeclawBindings() {
         扫码日志文件
         <input data-field="logFile" value="${escapeHtml(binding.logFile || '')}" />
       </label>
+      <label>
+        登录数据目录
+        <input data-field="dataDir" value="${escapeHtml(binding.dataDir || '')}" />
+      </label>
       <div class="binding-actions">
         <button class="secondary" type="button" data-action="qr">显示扫码日志</button>
         <button class="secondary" type="button" data-action="detect">识别最近发信人</button>
         <button class="secondary" type="button" data-action="health">检测这个绑定</button>
         <button class="secondary" type="button" data-action="test">测试这个绑定</button>
-        <button class="secondary" type="button" data-action="delete">删除</button>
+        <button class="secondary danger" type="button" data-action="delete">删除并清空</button>
       </div>
     `;
 
@@ -232,9 +238,27 @@ function renderWeclawBindings() {
       }
     });
 
-    row.querySelector('[data-action="delete"]').addEventListener('click', () => {
-      weclaw.bindings.splice(index, 1);
-      renderWeclawBindings();
+    row.querySelector('[data-action="delete"]').addEventListener('click', async () => {
+      const current = collectBindingFromRow(row);
+      const restartName = current.name || defaultWeclawBinding(index).name;
+      const confirmed = window.confirm(
+        `确定删除 ${restartName} 并清空它的 WeClaw 登录数据和日志吗？\n\n清空后需要在服务器执行：docker compose restart ${restartName}`
+      );
+      if (!confirmed) return;
+
+      $('weclawStatus').textContent = `正在清空 ${restartName} 的 WeClaw 数据...`;
+      try {
+        const data = await api('/api/weclaw/delete-binding', {
+          method: 'POST',
+          body: JSON.stringify({ binding: current })
+        });
+        weclaw.bindings.splice(index, 1);
+        renderWeclawBindings();
+        await saveConfig(false);
+        $('weclawStatus').textContent = `${data.message} 服务器执行：docker compose restart ${restartName}`;
+      } catch (error) {
+        $('weclawStatus').textContent = error.message;
+      }
     });
 
     list.appendChild(row);

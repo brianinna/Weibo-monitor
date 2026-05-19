@@ -107,6 +107,10 @@ button.secondary {
   color: #344054;
 }
 
+button.danger {
+  color: #b42318;
+}
+
 .actions,
 .add-user {
   display: flex;

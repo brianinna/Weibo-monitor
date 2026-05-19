@@ -22,10 +22,13 @@ services:
       WEIBO_MONITOR_NOVNC_PORT: "18790"
       WEIBO_MONITOR_WECLAW_LOG: /app/weclaw-logs/weclaw.log
       WEIBO_MONITOR_WECLAW_LOG_DIR: /app/weclaw-logs
+      WEIBO_MONITOR_WECLAW_DATA_DIR: /app/weclaw-data
       DISPLAY: ":99"
     volumes:
       - ./docker-data/weibo-monitor:/app/data
-      - ./docker-data/weclaw-logs:/app/weclaw-logs:ro
+      - ./docker-data/weclaw-logs:/app/weclaw-logs
+      - ./docker-data/weclaw:/app/weclaw-data/weclaw
+      - ./docker-data/weclaw-2:/app/weclaw-data/weclaw-2
     ports:
       - "127.0.0.1:18787:18787"
       - "127.0.0.1:18790:18790"
