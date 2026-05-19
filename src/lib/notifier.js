@@ -147,7 +147,7 @@ function requestJson(method, url, body, timeoutMs = 30000) {
             return;
           }
 
-          reject(new Error(`HTTP ${response.statusCode}: ${String(responseBody).slice(0, 300)}`));
+          reject(new Error(formatHttpError(response.statusCode, responseBody)));
         });
       }
     );
@@ -159,6 +159,18 @@ function requestJson(method, url, body, timeoutMs = 30000) {
     if (data) request.write(data);
     request.end();
   });
+}
+
+function formatHttpError(statusCode, responseBody) {
+  const body = String(responseBody || '').slice(0, 300);
+  const hints = [];
+  if (/ret=-2\b/.test(body)) {
+    hints.push('ret=-2 通常表示微信发送频率限制，先停 2-5 分钟再重试');
+  }
+  if (/ret=-14\b/.test(body)) {
+    hints.push('ret=-14 通常表示会话或登录态过期，需要重新扫码登录');
+  }
+  return `HTTP ${statusCode}: ${body}${hints.length ? ` (${hints.join('；')})` : ''}`;
 }
 
 function healthUrlFromApi(apiUrl) {
@@ -224,31 +236,27 @@ async function notifyResults(config, results, options = {}) {
           continue;
         }
 
-        try {
-          await sendWeclawPayload(binding, {
-            to: binding.to,
-            text: buildPostText(result.user || {}, post)
-          });
-          summary.sentPosts += 1;
-          log(`WeClaw text sent post=${post.id} binding=${binding.name || binding.apiUrl}`);
-        } catch (error) {
-          summary.failedPosts += 1;
-          log(`WeClaw text failed post=${post.id} binding=${binding.name || binding.apiUrl}: ${error.message}`);
-          continue;
+        const text = buildPostText(result.user || {}, post);
+        const payload = {
+          to: binding.to,
+          text
+        };
+        if (weclaw.sendImages !== false && mediaUrl) {
+          payload.media_url = mediaUrl;
         }
 
-        if (weclaw.sendImages === false || !mediaUrl) continue;
-
         try {
-          await sendWeclawPayload(binding, {
-            to: binding.to,
-            media_url: mediaUrl
-          });
-          summary.sentImages += 1;
-          log(`WeClaw image sent post=${post.id} binding=${binding.name || binding.apiUrl}`);
+          await sendWeclawPayload(binding, payload);
+          summary.sentPosts += 1;
+          log(`WeClaw text sent post=${post.id} binding=${binding.name || binding.apiUrl}`);
+          if (payload.media_url) {
+            summary.sentImages += 1;
+            log(`WeClaw image sent post=${post.id} binding=${binding.name || binding.apiUrl}`);
+          }
         } catch (error) {
-          summary.failedImages += 1;
-          log(`WeClaw image failed post=${post.id} binding=${binding.name || binding.apiUrl}: ${error.message}`);
+          summary.failedPosts += 1;
+          if (payload.media_url) summary.failedImages += 1;
+          log(`WeClaw notification failed post=${post.id} binding=${binding.name || binding.apiUrl}: ${error.message}`);
         }
       }
     }
