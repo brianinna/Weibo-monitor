@@ -204,6 +204,7 @@ async function notifyResults(config, results, options = {}) {
   const summary = { sentPosts: 0, sentImages: 0, failedPosts: 0, failedImages: 0, skipped: false };
 
   if (!weclaw.enabled) {
+    log('WeClaw notification skipped: notifications.weclaw.enabled is false');
     summary.skipped = true;
     return summary;
   }
