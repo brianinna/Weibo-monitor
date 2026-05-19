@@ -196,7 +196,7 @@ function clearWeclawBindingData(binding) {
     dataDir,
     logFile,
     restartCommand: `docker compose up -d --no-deps --force-recreate ${containerName}`,
-    message: `已清空 ${normalized.name || 'WeClaw'} 的登录数据和日志。正在运行的 WeClaw 容器不会自动失效，必须重建对应容器后才会重新出扫码。`
+    message: `已清空 ${normalized.name || 'WeClaw'} 的登录数据和日志，可用于重新绑定。正在运行的 WeClaw 容器不会自动失效，必须重建对应容器后才会重新出扫码。`
   };
 }
 
@@ -587,6 +587,15 @@ async function handleApi(req, res) {
   if (req.method === 'GET' && url.pathname === '/api/weclaw/log-tail') {
     try {
       return sendJson(res, 200, await readWeclawLogTail(url.searchParams.get('logFile')));
+    } catch (error) {
+      return sendJson(res, 500, { error: error.message });
+    }
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/weclaw/reset-binding') {
+    try {
+      const body = await readBody(req);
+      return sendJson(res, 200, clearWeclawBindingData(body.binding));
     } catch (error) {
       return sendJson(res, 500, { error: error.message });
     }

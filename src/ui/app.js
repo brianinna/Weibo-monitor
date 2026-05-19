@@ -170,7 +170,8 @@ function renderWeclawBindings() {
         <button class="secondary" type="button" data-action="detect">识别最近发信人</button>
         <button class="secondary" type="button" data-action="health">检测这个绑定</button>
         <button class="secondary" type="button" data-action="test">测试这个绑定</button>
-        <button class="secondary danger" type="button" data-action="delete">删除并清空</button>
+        <button class="secondary" type="button" data-action="rebind">重新绑定</button>
+        <button class="secondary danger" type="button" data-action="delete">删除配置</button>
       </div>
     `;
 
@@ -238,27 +239,39 @@ function renderWeclawBindings() {
       }
     });
 
-    row.querySelector('[data-action="delete"]').addEventListener('click', async () => {
+    row.querySelector('[data-action="rebind"]').addEventListener('click', async () => {
       const current = collectBindingFromRow(row);
       const restartName = current.name || defaultWeclawBinding(index).name;
       const confirmed = window.confirm(
-        `确定删除 ${restartName} 并清空它的 WeClaw 登录数据和日志吗？\n\n这不会停止正在运行的 Docker 容器。清空后需要在服务器执行：docker compose up -d --no-deps --force-recreate ${restartName}`
+        `确定清空 ${restartName} 的 WeClaw 登录数据并重新绑定吗？\n\n这会保留当前配置，但不会停止正在运行的 Docker 容器。清空后需要在服务器执行：docker compose up -d --no-deps --force-recreate ${restartName}`
       );
       if (!confirmed) return;
 
       $('weclawStatus').textContent = `正在清空 ${restartName} 的 WeClaw 数据...`;
       try {
-        const data = await api('/api/weclaw/delete-binding', {
+        await saveConfig(false);
+        const data = await api('/api/weclaw/reset-binding', {
           method: 'POST',
           body: JSON.stringify({ binding: current })
         });
-        weclaw.bindings.splice(index, 1);
-        renderWeclawBindings();
-        await saveConfig(false);
-        $('weclawStatus').textContent = `${data.message} 服务器执行：${data.restartCommand || `docker compose up -d --no-deps --force-recreate ${restartName}`}`;
+        $('weclawStatus').textContent = `${data.message} 服务器执行：${data.restartCommand || `docker compose up -d --no-deps --force-recreate ${restartName}`}。扫码后让接收通知的微信发一条消息，再点“识别最近发信人”。`;
       } catch (error) {
         $('weclawStatus').textContent = error.message;
       }
+    });
+
+    row.querySelector('[data-action="delete"]').addEventListener('click', async () => {
+      const current = collectBindingFromRow(row);
+      const name = current.name || defaultWeclawBinding(index).name;
+      const confirmed = window.confirm(
+        `确定从配置中删除 ${name} 吗？\n\n这不会清空 WeClaw 登录数据，也不会删除 Docker 容器。`
+      );
+      if (!confirmed) return;
+
+      weclaw.bindings.splice(index, 1);
+      renderWeclawBindings();
+      await saveConfig(false);
+      $('weclawStatus').textContent = `已从配置中删除 ${name}。如需清空登录数据，请先使用“重新绑定”。`;
     });
 
     list.appendChild(row);
