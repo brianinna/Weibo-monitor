@@ -32,17 +32,18 @@ function defaultWeclawBinding(index = 0) {
 }
 
 function normalizeWeclawBindings(weclaw) {
-  const bindings = Array.isArray(weclaw.bindings) ? weclaw.bindings : [];
-  if (bindings.length > 0) {
-    return bindings.map((binding, index) => ({
+  if (Array.isArray(weclaw.bindings)) {
+    return weclaw.bindings.map((binding, index) => ({
       ...defaultWeclawBinding(index),
       ...binding,
       to: binding.to || ''
     }));
   }
+  const legacyTo = weclaw.to || (Array.isArray(weclaw.recipients) ? weclaw.recipients[0] || '' : '');
+  if (!legacyTo) return [];
   const first = defaultWeclawBinding(0);
   first.apiUrl = weclaw.apiUrl || first.apiUrl;
-  first.to = weclaw.to || (Array.isArray(weclaw.recipients) ? weclaw.recipients[0] || '' : '');
+  first.to = legacyTo;
   return [first];
 }
 
@@ -101,6 +102,14 @@ function getBindingRows() {
 
 function bindingName(binding, index) {
   return String((binding && binding.name) || defaultWeclawBinding(index).name).trim();
+}
+
+function showWeclawCommand(command) {
+  const box = $('weclawCommandBox');
+  const pre = $('weclawCommand');
+  if (!box || !pre) return;
+  pre.textContent = command || '';
+  box.classList.toggle('hidden', !command);
 }
 
 function renderAdminBindingOptions() {
@@ -254,7 +263,13 @@ function renderWeclawBindings() {
           method: 'POST',
           body: JSON.stringify({ binding: current })
         });
-        $('weclawStatus').textContent = `${data.message} 服务器执行：${data.restartCommand || `docker compose up -d --no-deps --force-recreate ${restartName}`}。扫码后让接收通知的微信发一条消息，再点“识别最近发信人”。`;
+        const command = [
+          'cd ~/Weibo-monitor',
+          data.restartCommand || `docker compose up -d --no-deps --force-recreate ${restartName}`,
+          `docker compose logs -f ${restartName}`
+        ].join('\n');
+        showWeclawCommand(command);
+        $('weclawStatus').textContent = `${data.message} 复制下面命令到服务器执行。扫码后让接收通知的微信发一条消息，再点“识别最近发信人”。`;
       } catch (error) {
         $('weclawStatus').textContent = error.message;
       }
@@ -271,6 +286,7 @@ function renderWeclawBindings() {
       weclaw.bindings.splice(index, 1);
       renderWeclawBindings();
       await saveConfig(false);
+      showWeclawCommand('');
       $('weclawStatus').textContent = `已从配置中删除 ${name}。如需清空登录数据，请先使用“重新绑定”。`;
     });
 
@@ -417,6 +433,16 @@ async function init() {
   $('saveBtn').addEventListener('click', saveConfig);
   $('adminBindingName').addEventListener('change', () => {
     getWeclawConfig().adminBindingName = $('adminBindingName').value;
+  });
+  $('copyWeclawCommandBtn').addEventListener('click', async () => {
+    const command = $('weclawCommand').textContent;
+    if (!command) return;
+    try {
+      await navigator.clipboard.writeText(command);
+      $('weclawStatus').textContent = '重建命令已复制，可以粘贴到服务器执行';
+    } catch (_) {
+      $('weclawStatus').textContent = '浏览器不允许自动复制，请手动选中下面命令复制';
+    }
   });
 
   $('addUserBtn').addEventListener('click', async () => {

@@ -246,6 +246,39 @@ button.danger {
   overflow-wrap: anywhere;
 }
 
+.command-box {
+  margin-top: 12px;
+  border: 1px solid #d0d5dd;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #111827;
+}
+
+.command-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  color: #e5e7eb;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.command-head button {
+  height: 32px;
+}
+
+#weclawCommand {
+  margin: 0;
+  padding: 12px;
+  color: #f9fafb;
+  white-space: pre-wrap;
+  overflow-x: auto;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 #weclawQrLog {
   min-height: 0;
   max-height: 460px;
