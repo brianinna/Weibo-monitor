@@ -242,7 +242,7 @@ function renderWeclawBindings() {
       const current = collectBindingFromRow(row);
       const restartName = current.name || defaultWeclawBinding(index).name;
       const confirmed = window.confirm(
-        `确定删除 ${restartName} 并清空它的 WeClaw 登录数据和日志吗？\n\n清空后需要在服务器执行：docker compose restart ${restartName}`
+        `确定删除 ${restartName} 并清空它的 WeClaw 登录数据和日志吗？\n\n这不会停止正在运行的 Docker 容器。清空后需要在服务器执行：docker compose up -d --no-deps --force-recreate ${restartName}`
       );
       if (!confirmed) return;
 
@@ -255,7 +255,7 @@ function renderWeclawBindings() {
         weclaw.bindings.splice(index, 1);
         renderWeclawBindings();
         await saveConfig(false);
-        $('weclawStatus').textContent = `${data.message} 服务器执行：docker compose restart ${restartName}`;
+        $('weclawStatus').textContent = `${data.message} 服务器执行：${data.restartCommand || `docker compose up -d --no-deps --force-recreate ${restartName}`}`;
       } catch (error) {
         $('weclawStatus').textContent = error.message;
       }

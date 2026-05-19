@@ -186,6 +186,7 @@ function clearWeclawBindingData(binding) {
   const safeName = String(normalized.name || 'weclaw').replace(/[^a-zA-Z0-9_.-]/g, '_');
   const dataDir = resolveWeclawDataDir(normalized.dataDir || safeName, safeName);
   const logFile = resolveWeclawLogFile(normalized.logFile || `${safeName}.log`);
+  const containerName = normalized.name || safeName || 'weclaw';
   clearDirectoryContents(dataDir);
   fs.mkdirSync(path.dirname(logFile), { recursive: true });
   fs.writeFileSync(logFile, '', 'utf8');
@@ -194,7 +195,8 @@ function clearWeclawBindingData(binding) {
     name: normalized.name,
     dataDir,
     logFile,
-    message: `已清空 ${normalized.name || 'WeClaw'} 的登录数据和日志。请重启对应 WeClaw 容器后重新扫码。`
+    restartCommand: `docker compose up -d --no-deps --force-recreate ${containerName}`,
+    message: `已清空 ${normalized.name || 'WeClaw'} 的登录数据和日志。正在运行的 WeClaw 容器不会自动失效，必须重建对应容器后才会重新出扫码。`
   };
 }
 
