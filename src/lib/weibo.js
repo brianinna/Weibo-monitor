@@ -21,6 +21,11 @@ function sanitizeFileName(value) {
   return String(value).replace(/[^a-zA-Z0-9_-]/g, '_');
 }
 
+function isRecoverablePageError(error) {
+  const message = String((error && error.message) || error || '');
+  return /Page crashed|Target page, context or browser has been closed|Target closed|Browser has been closed|browser has disconnected|Session closed/i.test(message);
+}
+
 class WeiboClient {
   constructor(context, options = {}) {
     this.context = context;
@@ -93,20 +98,41 @@ class WeiboClient {
   }
 
   async openUserPage(uid) {
-    const page = this.pagePool ? await this.pagePool.getUserPage(uid) : await this.context.newPage();
     const target = `https://weibo.com/${uid}`;
-    if (!page.url().startsWith(target)) {
-      await page.goto(target, {
-        waitUntil: 'domcontentloaded',
-        timeout: 30000
-      });
-      return;
+    let lastError;
+
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const page = this.pagePool ? await this.pagePool.getUserPage(uid) : await this.context.newPage();
+      try {
+        if (!page.url().startsWith(target)) {
+          await page.goto(target, {
+            waitUntil: 'domcontentloaded',
+            timeout: 30000
+          });
+          return;
+        }
+
+        await page.reload({
+          waitUntil: 'domcontentloaded',
+          timeout: 30000
+        });
+        return;
+      } catch (error) {
+        lastError = error;
+        if (!isRecoverablePageError(error)) throw error;
+
+        if (this.pagePool) {
+          await this.pagePool.invalidateUserPage(uid);
+        } else {
+          await page.close().catch(() => {});
+        }
+
+        if (attempt >= 2) throw error;
+        this.log(`uid=${uid} recovered from page failure while opening user page: ${error.message}`);
+      }
     }
 
-    await page.reload({
-      waitUntil: 'domcontentloaded',
-      timeout: 30000
-    });
+    throw lastError;
   }
 
   async fetchLatestPostsFromWeb(uid, limit) {
@@ -337,4 +363,4 @@ class WeiboClient {
   }
 }
 
-module.exports = { WeiboClient };
+module.exports = { WeiboClient, isRecoverablePageError };

@@ -58,6 +58,7 @@ function getWeclawConfig(config) {
     apiUrl: 'http://127.0.0.1:18011/api/send',
     to: '',
     bindings: [],
+    adminBindingName: '',
     sendImages: true,
     mediaHost: '127.0.0.1',
     mediaPort: 18789,
@@ -77,6 +78,12 @@ function getActiveBindings(weclaw) {
   return weclaw.bindings.filter((binding) => binding.enabled !== false && binding.apiUrl);
 }
 
+function getAdminBinding(weclaw) {
+  const adminName = String(weclaw.adminBindingName || '').trim();
+  if (!adminName) return null;
+  return weclaw.bindings.find((binding) => String(binding.name || '').trim() === adminName) || null;
+}
+
 function truncate(value, maxLength) {
   const text = String(value || '').trim();
   if (text.length <= maxLength) return text;
@@ -89,6 +96,19 @@ function buildPostText(user, post) {
   if (post.createdAt) parts.push(`时间：${post.createdAt}`);
   if (post.text) parts.push(`内容：${truncate(post.text, 900)}`);
   if (post.url) parts.push(`链接：${post.url}`);
+  return parts.join('\n');
+}
+
+function buildMonitorErrorText(error, options = {}) {
+  const stack = String((error && (error.stack || error.message)) || error || '');
+  const lines = stack.split(/\r?\n/).filter(Boolean);
+  const message = lines[0] || 'Unknown error';
+  const details = lines.slice(0, 12).join('\n');
+  const parts = ['【微博监控异常】'];
+  parts.push(`时间：${new Date().toLocaleString('zh-CN', { hour12: false })}`);
+  if (options.reason) parts.push(`触发：${options.reason}`);
+  parts.push(`错误：${message}`);
+  if (details) parts.push(`详情：\n${truncate(details, 1600)}`);
   return parts.join('\n');
 }
 
@@ -236,6 +256,41 @@ async function notifyResults(config, results, options = {}) {
   return summary;
 }
 
+async function notifyMonitorError(config, error, options = {}) {
+  const log = options.log || (() => {});
+  const weclaw = getWeclawConfig(config);
+  const binding = getAdminBinding(weclaw);
+
+  if (!binding) {
+    log('WeClaw admin alert skipped: no admin binding selected');
+    return { ok: false, skipped: true, reason: 'no-admin-binding' };
+  }
+  if (binding.enabled === false) {
+    log(`WeClaw admin alert skipped binding=${binding.name || binding.apiUrl}: binding is disabled`);
+    return { ok: false, skipped: true, reason: 'binding-disabled' };
+  }
+  if (!binding.apiUrl) {
+    log(`WeClaw admin alert skipped binding=${binding.name || ''}: apiUrl is empty`);
+    return { ok: false, skipped: true, reason: 'api-url-empty' };
+  }
+  if (!binding.to) {
+    log(`WeClaw admin alert skipped binding=${binding.name || binding.apiUrl}: to is empty`);
+    return { ok: false, skipped: true, reason: 'to-empty' };
+  }
+
+  try {
+    await sendWeclawPayload(binding, {
+      to: binding.to,
+      text: buildMonitorErrorText(error, options)
+    });
+    log(`WeClaw admin alert sent binding=${binding.name || binding.apiUrl}`);
+    return { ok: true, skipped: false, binding: binding.name || binding.apiUrl };
+  } catch (sendError) {
+    log(`WeClaw admin alert failed binding=${binding.name || binding.apiUrl}: ${sendError.message}`);
+    return { ok: false, skipped: false, error: sendError.message };
+  }
+}
+
 async function sendWeclawTest(config, options = {}) {
   const weclaw = getWeclawConfig(config);
   const bindings = options.binding ? [normalizeBinding(options.binding)] : getActiveBindings(weclaw);
@@ -270,6 +325,7 @@ module.exports = {
   normalizeBinding,
   checkWeclawBindingHealth,
   checkWeclawHealth,
+  notifyMonitorError,
   notifyResults,
   sendWeclawPayload,
   sendWeclawTest

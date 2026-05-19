@@ -53,6 +53,7 @@ function getWeclawConfig() {
       apiUrl: 'http://127.0.0.1:18011/api/send',
       to: '',
       bindings: [],
+      adminBindingName: '',
       sendImages: true
     };
   }
@@ -96,6 +97,38 @@ function getBindingRows() {
   return Array.from(document.querySelectorAll('.weclaw-binding'));
 }
 
+function bindingName(binding, index) {
+  return String((binding && binding.name) || defaultWeclawBinding(index).name).trim();
+}
+
+function renderAdminBindingOptions() {
+  const select = $('adminBindingName');
+  if (!select) return;
+  const weclaw = getWeclawConfig();
+  const selected = weclaw.adminBindingName || '';
+  const rows = getBindingRows();
+  const bindings = rows.length > 0 ? rows.map(collectBindingFromRow) : normalizeWeclawBindings(weclaw);
+  const configuredBindings = bindings
+    .map((binding, index) => ({ binding, index }))
+    .filter(({ binding }) => binding.enabled !== false && binding.apiUrl && binding.to);
+
+  select.innerHTML = '';
+  const empty = document.createElement('option');
+  empty.value = '';
+  empty.textContent = '不发送异常告警';
+  select.appendChild(empty);
+
+  configuredBindings.forEach(({ binding, index }) => {
+    const name = bindingName(binding, index);
+    const option = document.createElement('option');
+    option.value = name;
+    option.textContent = `${name} (${binding.to})`;
+    select.appendChild(option);
+  });
+
+  select.value = configuredBindings.some(({ binding, index }) => bindingName(binding, index) === selected) ? selected : '';
+}
+
 function renderWeclawBindings() {
   const weclaw = getWeclawConfig();
   weclaw.bindings = normalizeWeclawBindings(weclaw);
@@ -135,6 +168,10 @@ function renderWeclawBindings() {
       </div>
     `;
 
+    row.querySelectorAll('[data-field]').forEach((input) => {
+      input.addEventListener(input.type === 'checkbox' ? 'change' : 'input', renderAdminBindingOptions);
+    });
+
     row.querySelector('[data-action="qr"]').addEventListener('click', async () => {
       const current = collectBindingFromRow(row);
       $('weclawStatus').textContent = `正在读取 ${current.name} 的扫码日志...`;
@@ -164,6 +201,7 @@ function renderWeclawBindings() {
       try {
         const data = await api(`/api/weclaw/last-sender?logFile=${encodeURIComponent(current.logFile)}`);
         row.querySelector('[data-field="to"]').value = data.to;
+        renderAdminBindingOptions();
         await saveConfig(false);
         $('weclawStatus').textContent = `已填入 ${current.name} 接收人 ID：${data.to}`;
       } catch (error) {
@@ -201,6 +239,7 @@ function renderWeclawBindings() {
 
     list.appendChild(row);
   });
+  renderAdminBindingOptions();
 }
 
 function formatTime(value) {
@@ -247,6 +286,7 @@ function fillForm() {
   $('notifyWeclawEnabled').checked = Boolean(weclaw.enabled);
   $('notifyImages').checked = weclaw.sendImages !== false;
   renderWeclawBindings();
+  renderAdminBindingOptions();
   renderUsers();
 }
 
@@ -262,6 +302,10 @@ function collectForm() {
   weclaw.enabled = $('notifyWeclawEnabled').checked;
   weclaw.sendImages = $('notifyImages').checked;
   weclaw.bindings = getBindingRows().map(collectBindingFromRow);
+  weclaw.adminBindingName = $('adminBindingName').value;
+  if (!weclaw.bindings.some((binding, index) => bindingName(binding, index) === weclaw.adminBindingName)) {
+    weclaw.adminBindingName = '';
+  }
   const first = weclaw.bindings[0] || {};
   weclaw.apiUrl = first.apiUrl || 'http://127.0.0.1:18011/api/send';
   weclaw.to = first.to || '';
@@ -334,6 +378,9 @@ async function init() {
 
   $('refreshProfilesBtn').addEventListener('click', loadProfiles);
   $('saveBtn').addEventListener('click', saveConfig);
+  $('adminBindingName').addEventListener('change', () => {
+    getWeclawConfig().adminBindingName = $('adminBindingName').value;
+  });
 
   $('addUserBtn').addEventListener('click', async () => {
     const input = $('userInput').value.trim();

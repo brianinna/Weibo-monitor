@@ -4,7 +4,7 @@ const { connectBrowser } = require('./lib/browser');
 const { getConfigPath, loadConfig, ensureConfig } = require('./lib/config');
 const { WeiboClient } = require('./lib/weibo');
 const { StateStore } = require('./lib/state');
-const { getWeclawConfig, notifyResults } = require('./lib/notifier');
+const { getWeclawConfig, notifyMonitorError, notifyResults } = require('./lib/notifier');
 const { startScreenshotServer } = require('./lib/screenshotServer');
 
 const ROOT = path.resolve(__dirname, '..');
@@ -136,6 +136,7 @@ async function monitorLoop() {
       await checkOnce(config, state, { mediaBaseUrl: mediaServer && mediaServer.publicBaseUrl });
     } catch (error) {
       log(`检查失败: ${error.stack || error.message}`);
+      await notifyMonitorError(config, error, { log, reason: 'interval' });
     }
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }

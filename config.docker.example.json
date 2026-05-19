@@ -42,6 +42,7 @@
           "logFile": "/app/weclaw-logs/weclaw-2.log"
         }
       ],
+      "adminBindingName": "",
       "sendImages": true,
       "mediaBaseUrl": "http://weibo-monitor:18787",
       "mediaHost": "0.0.0.0",

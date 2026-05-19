@@ -5,12 +5,12 @@ const { spawn } = require('child_process');
 const QRCode = require('qrcode');
 const { getConfigPath, loadConfig, ensureConfig } = require('./lib/config');
 const { listProfiles, connectBrowser } = require('./lib/browser');
-const { WeiboClient } = require('./lib/weibo');
+const { WeiboClient, isRecoverablePageError } = require('./lib/weibo');
 const { parseWeiboUser } = require('./lib/user');
 const { StateStore } = require('./lib/state');
 const { PagePool } = require('./lib/pagePool');
 const { serveScreenshot } = require('./lib/screenshotServer');
-const { checkWeclawBindingHealth, checkWeclawHealth, getWeclawConfig, normalizeBinding, notifyResults, sendWeclawTest } = require('./lib/notifier');
+const { checkWeclawBindingHealth, checkWeclawHealth, getWeclawConfig, normalizeBinding, notifyMonitorError, notifyResults, sendWeclawTest } = require('./lib/notifier');
 
 const ROOT = path.resolve(__dirname, '..');
 const UI_ROOT = path.join(ROOT, 'src', 'ui');
@@ -34,18 +34,40 @@ function addLog(message) {
   console.log(line);
 }
 
+function firstErrorLine(error) {
+  return String((error && error.message) || error || '').split(/\r?\n/)[0];
+}
+
+async function resetBrowserSession(reason) {
+  const session = browserSession;
+  browserSession = null;
+  pagePool = null;
+  loginPage = null;
+  if (reason) addLog(`browser session reset: ${reason}`);
+  if (session && session.browser) {
+    try {
+      if (typeof session.browser.disconnect === 'function') {
+        session.browser.disconnect();
+      } else {
+        await session.browser.close();
+      }
+    } catch (error) {
+      addLog(`browser session reset cleanup failed: ${error.message}`);
+    }
+  }
+}
+
 async function getBrowserSession(config) {
   if (browserSession) {
     try {
       if (browserSession.browser.isConnected()) return browserSession;
     } catch (_) {
-      browserSession = null;
-      pagePool = null;
     }
+    await resetBrowserSession('browser disconnected');
   }
 
   browserSession = await connectBrowser(config.browser, (message) => console.log(message));
-  pagePool = new PagePool(browserSession.context);
+  pagePool = new PagePool(browserSession.context, { log: addLog });
   return browserSession;
 }
 
@@ -377,13 +399,23 @@ async function runScheduledCheck(reason) {
     return;
   }
   monitorRunning = true;
+  let config;
   try {
     addLog(`monitor start reason=${reason}`);
-    const results = await checkOnce(readConfig());
+    config = readConfig();
+    const results = await checkOnce(config);
     const freshTotal = results.reduce((sum, item) => sum + item.freshCount, 0);
     addLog(`monitor done reason=${reason}, users=${results.length}, fresh=${freshTotal}`);
   } catch (error) {
     addLog(`monitor failed reason=${reason}: ${error.stack || error.message}`);
+    try {
+      await notifyMonitorError(config || readConfig(), error, { log: addLog, reason });
+    } catch (alertError) {
+      addLog(`monitor alert failed reason=${reason}: ${alertError.message}`);
+    }
+    if (isRecoverablePageError(error)) {
+      await resetBrowserSession(`recoverable monitor failure: ${firstErrorLine(error)}`);
+    }
   } finally {
     monitorRunning = false;
   }
@@ -555,9 +587,19 @@ async function handleApi(req, res) {
   }
 
   if (req.method === 'POST' && url.pathname === '/api/check') {
+    let config;
     try {
-      return sendJson(res, 200, { results: await checkOnce(readConfig()) });
+      config = readConfig();
+      return sendJson(res, 200, { results: await checkOnce(config) });
     } catch (error) {
+      try {
+        await notifyMonitorError(config || readConfig(), error, { log: addLog, reason: 'manual' });
+      } catch (alertError) {
+        addLog(`manual check alert failed: ${alertError.message}`);
+      }
+      if (isRecoverablePageError(error)) {
+        await resetBrowserSession(`recoverable manual check failure: ${firstErrorLine(error)}`);
+      }
       return sendJson(res, 500, { error: error.message });
     }
   }
