@@ -122,9 +122,9 @@ function noteSendFailure(binding, error) {
   const { key, state } = getCooldownState(binding);
   state.failures += 1;
   state.reason = kind;
-  const baseMs = kind === 'session-expired' ? 30 * 60 * 1000 : 5 * 60 * 1000;
+  const baseMs = 30 * 60 * 1000;
   const multiplier = Math.min(6, state.failures);
-  const cooldownMs = Math.min(30 * 60 * 1000, baseMs * multiplier);
+  const cooldownMs = Math.min(2 * 60 * 60 * 1000, baseMs * multiplier);
   state.until = Date.now() + cooldownMs;
   bindingCooldowns.set(key, state);
   return state;
@@ -370,15 +370,30 @@ async function notifyMonitorError(config, error, options = {}) {
     return { ok: false, skipped: true, reason: 'to-empty' };
   }
 
+  const cooldown = activeCooldown(binding);
+  if (cooldown) {
+    log(
+      `WeClaw admin alert delayed binding=${binding.name || binding.apiUrl}: cooldown=${cooldown.reason}, retryAfter=${formatDuration(cooldown.until - Date.now())}`
+    );
+    return { ok: false, skipped: true, reason: 'cooldown' };
+  }
+
   try {
     await sendWeclawPayload(binding, {
       to: binding.to,
       text: buildMonitorErrorText(error, options)
     });
+    noteSendSuccess(binding);
     log(`WeClaw admin alert sent binding=${binding.name || binding.apiUrl}`);
     return { ok: true, skipped: false, binding: binding.name || binding.apiUrl };
   } catch (sendError) {
+    const cooldownState = noteSendFailure(binding, sendError);
     log(`WeClaw admin alert failed binding=${binding.name || binding.apiUrl}: ${sendError.message}`);
+    if (cooldownState) {
+      log(
+        `WeClaw binding cooldown binding=${binding.name || binding.apiUrl}: reason=${cooldownState.reason}, retryAfter=${formatDuration(cooldownState.until - Date.now())}`
+      );
+    }
     return { ok: false, skipped: false, error: sendError.message };
   }
 }

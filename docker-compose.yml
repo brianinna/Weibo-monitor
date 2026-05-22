@@ -52,6 +52,8 @@ services:
       WECLAW_RESTART_ON_SEND_FAILURES: "3"
       WECLAW_RESTART_FAILURE_WINDOW_SECONDS: "3600"
       WECLAW_RESTART_ON_SESSION_EXPIRED: "1"
+      WECLAW_RESTART_LIMIT: "2"
+      WECLAW_RESTART_LIMIT_WINDOW_SECONDS: "900"
     volumes:
       - ./docker-data/weclaw:/root/.weclaw
       - ./docker-data/weclaw-logs:/var/log/weclaw
@@ -75,6 +77,8 @@ services:
       WECLAW_RESTART_ON_SEND_FAILURES: "3"
       WECLAW_RESTART_FAILURE_WINDOW_SECONDS: "3600"
       WECLAW_RESTART_ON_SESSION_EXPIRED: "1"
+      WECLAW_RESTART_LIMIT: "2"
+      WECLAW_RESTART_LIMIT_WINDOW_SECONDS: "900"
     volumes:
       - ./docker-data/weclaw-2:/root/.weclaw
       - ./docker-data/weclaw-logs:/var/log/weclaw
