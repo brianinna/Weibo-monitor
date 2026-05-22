@@ -21,6 +21,32 @@ function sanitizeFileName(value) {
   return String(value).replace(/[^a-zA-Z0-9_-]/g, '_');
 }
 
+function firstLine(value) {
+  return String(value || '').split(/\r?\n/)[0];
+}
+
+function withTimeout(promise, timeoutMs, message) {
+  const task = Promise.resolve(promise);
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+
+  return Promise.race([task, timeout]).finally(() => {
+    clearTimeout(timer);
+    task.catch(() => {});
+  });
+}
+
+async function closePageQuietly(page, timeoutMs = 3000) {
+  if (!page || page.isClosed()) return;
+  try {
+    await withTimeout(page.close(), timeoutMs, `page.close timed out after ${timeoutMs}ms`);
+  } catch (_) {
+    // Closing is best-effort after a screenshot timeout.
+  }
+}
+
 function isRecoverablePageError(error) {
   const message = String((error && error.message) || error || '');
   return /Page crashed|Target page, context or browser has been closed|Target closed|Browser has been closed|browser has disconnected|Session closed/i.test(message);
@@ -267,54 +293,85 @@ class WeiboClient {
   async capturePostScreenshots(uid, posts, outputDir) {
     if (!posts.length) return posts;
     await fs.mkdir(outputDir, { recursive: true });
+    const batchTimeoutMs = 45000;
+    const batchStartedAt = Date.now();
     const missing = [];
     for (const post of posts) {
       const file = path.join(outputDir, `${sanitizeFileName(post.id)}.png`);
-      post.screenshot = file;
       const stat = await fs.stat(file).catch(() => null);
       if (stat && stat.size > 0) {
+        post.screenshot = file;
+        delete post.screenshotError;
         this.log(`uid=${uid} screenshot exists post=${post.id} file=${file}`);
       } else {
+        post.screenshot = '';
         missing.push({ post, file });
       }
     }
 
     if (missing.length === 0) return posts;
 
-    let page;
-    try {
-      page = await this.context.newPage();
-      await page.setViewportSize({ width: 1280, height: 900 });
-    } catch (error) {
-      this.log(`uid=${uid} screenshot page failed: ${error.message}`);
-      return posts;
-    }
-
-    try {
-      for (const item of missing) {
-        const { post, file } = item;
-        try {
-          await page.goto(post.url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-          await page.waitForTimeout(1200);
-
-          const article = page.locator('article').first();
-          const count = await article.count();
-          if (count > 0) {
-            await article.screenshot({ path: file, timeout: 12000 });
-          } else {
-            await page.screenshot({ path: file, fullPage: false, timeout: 12000 });
-          }
-
-          this.log(`uid=${uid} screenshot saved post=${post.id} file=${file}`);
-        } catch (error) {
-          this.log(`uid=${uid} screenshot failed post=${post.id}: ${error.message}`);
-        }
+    for (const item of missing) {
+      const { post, file } = item;
+      const elapsed = Date.now() - batchStartedAt;
+      if (elapsed >= batchTimeoutMs) {
+        post.screenshotError = `screenshot batch timeout after ${batchTimeoutMs}ms`;
+        this.log(`uid=${uid} screenshot skipped post=${post.id}: ${post.screenshotError}`);
+        continue;
       }
-    } finally {
-      await page.close().catch(() => {});
+
+      await this.captureSinglePostScreenshot(uid, post, file, batchTimeoutMs - elapsed);
     }
 
     return posts;
+  }
+
+  async captureSinglePostScreenshot(uid, post, file, remainingBatchMs) {
+    const perPostBudgetMs = Math.max(3000, Math.min(20000, remainingBatchMs));
+    const deadline = Date.now() + perPostBudgetMs;
+    const remaining = () => Math.max(1000, deadline - Date.now());
+    let page;
+
+    try {
+      page = await withTimeout(this.context.newPage(), Math.min(5000, remaining()), 'new screenshot page timed out');
+      await withTimeout(page.setViewportSize({ width: 1280, height: 900 }), Math.min(3000, remaining()), 'set screenshot viewport timed out');
+      await withTimeout(
+        page.goto(post.url, { waitUntil: 'domcontentloaded', timeout: Math.min(12000, remaining()) }),
+        Math.min(15000, remaining()),
+        `page.goto timed out for ${post.url}`
+      );
+      await page.waitForTimeout(Math.min(1200, remaining()));
+
+      const article = page.locator('article').first();
+      const count = await withTimeout(article.count(), Math.min(3000, remaining()), 'article lookup timed out');
+      if (count > 0) {
+        await withTimeout(
+          article.screenshot({ path: file, timeout: Math.min(8000, remaining()) }),
+          Math.min(10000, remaining()),
+          'article screenshot timed out'
+        );
+      } else {
+        await withTimeout(
+          page.screenshot({ path: file, fullPage: false, timeout: Math.min(8000, remaining()) }),
+          Math.min(10000, remaining()),
+          'page screenshot timed out'
+        );
+      }
+
+      const stat = await fs.stat(file).catch(() => null);
+      if (!stat || stat.size <= 0) throw new Error('screenshot file is empty');
+
+      post.screenshot = file;
+      delete post.screenshotError;
+      this.log(`uid=${uid} screenshot saved post=${post.id} file=${file}`);
+    } catch (error) {
+      await fs.unlink(file).catch(() => {});
+      post.screenshot = '';
+      post.screenshotError = firstLine(error.message);
+      this.log(`uid=${uid} screenshot failed post=${post.id}: ${error.message}`);
+    } finally {
+      await closePageQuietly(page);
+    }
   }
 
   async resolveMobileContainerId(uid) {

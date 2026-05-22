@@ -14,6 +14,10 @@ function log(message) {
   console.log(`[${formatTimestamp()}] ${message}`);
 }
 
+function firstErrorLine(error) {
+  return String((error && error.message) || error || '').split(/\r?\n/)[0];
+}
+
 function uniquePosts(posts) {
   const seen = new Set();
   const unique = [];
@@ -47,6 +51,8 @@ async function checkOnce(config, state, options = {}) {
   const session = await connectBrowser(config.browser, log);
   const client = new WeiboClient(session.context, { log });
   const results = [];
+  const stateUpdates = [];
+  const screenshotFailures = [];
 
   try {
     for (const user of config.users) {
@@ -68,12 +74,18 @@ async function checkOnce(config, state, options = {}) {
       const fresh = getFreshPosts(scan, posts, knownIds, config.monitor.notifyOnFirstRun);
 
       const screenshotDir = path.join(ROOT, 'data', 'screenshots', uid);
-      await client.capturePostScreenshots(
+      const screenshotTargets = uniquePosts([...posts.slice(0, config.monitor.maxPostsPerUser), ...fresh]);
+      await client.capturePostScreenshots(uid, screenshotTargets, screenshotDir);
+      for (const post of screenshotTargets) {
+        if (post.screenshotError) {
+          screenshotFailures.push({ uid, postId: post.id, error: post.screenshotError });
+        }
+      }
+      stateUpdates.push({
         uid,
-        uniquePosts([...posts.slice(0, config.monitor.maxPostsPerUser), ...fresh]),
-        screenshotDir
-      );
-      state.upsertPosts(uid, scan.scannedPosts || posts);
+        posts: scan.scannedPosts || posts,
+        freshIds: new Set(fresh.map((post) => post.id))
+      });
 
       if (knownIds.size === 0 && !config.monitor.notifyOnFirstRun) {
         log(`${label}: 首次运行，已记录 ${posts.length} 条微博，不推送历史内容`);
@@ -102,7 +114,6 @@ async function checkOnce(config, state, options = {}) {
       });
     }
   } finally {
-    await state.save();
     await session.close();
   }
 
@@ -114,6 +125,43 @@ async function checkOnce(config, state, options = {}) {
     log(
       `通知完成: posts=${notificationSummary.sentPosts}, images=${notificationSummary.sentImages}, failedPosts=${notificationSummary.failedPosts}, failedImages=${notificationSummary.failedImages}`
     );
+  }
+
+  const failedPostIds = new Set(notificationSummary.failedPostIds || []);
+  for (const update of stateUpdates) {
+    const hasFailedFresh = Array.from(update.freshIds).some((id) => failedPostIds.has(id));
+    const postsToPersist = hasFailedFresh
+      ? update.posts.filter((post) => !update.freshIds.has(post.id))
+      : update.posts;
+
+    if (hasFailedFresh) {
+      log(`uid=${update.uid} pending notification retry posts=${Array.from(update.freshIds).join(', ')}`);
+    }
+
+    state.upsertPosts(update.uid, postsToPersist);
+  }
+  await state.save();
+
+  const warningLines = [];
+  if (screenshotFailures.length > 0) {
+    warningLines.push(`Screenshot failures=${screenshotFailures.length}`);
+    warningLines.push(
+      screenshotFailures
+        .slice(0, 8)
+        .map((item) => `${item.uid}/${item.postId}: ${firstErrorLine(item.error)}`)
+        .join('\n')
+    );
+  }
+  if (notificationSummary.failedPosts > 0) {
+    warningLines.push(
+      `Notification failures posts=${notificationSummary.failedPosts}, images=${notificationSummary.failedImages}, retryPostIds=${(notificationSummary.failedPostIds || []).join(', ')}`
+    );
+  }
+  if (warningLines.length > 0) {
+    await notifyMonitorError(config, new Error(warningLines.filter(Boolean).join('\n')), {
+      log,
+      reason: 'degraded'
+    });
   }
 
   return results;

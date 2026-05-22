@@ -49,6 +49,9 @@ services:
       TZ: Asia/Shanghai
       WECLAW_API_ADDR: 0.0.0.0:18011
       WECLAW_LOG_FILE: /var/log/weclaw/weclaw.log
+      WECLAW_RESTART_ON_SEND_FAILURES: "3"
+      WECLAW_RESTART_FAILURE_WINDOW_SECONDS: "3600"
+      WECLAW_RESTART_ON_SESSION_EXPIRED: "1"
     volumes:
       - ./docker-data/weclaw:/root/.weclaw
       - ./docker-data/weclaw-logs:/var/log/weclaw
@@ -69,6 +72,9 @@ services:
       TZ: Asia/Shanghai
       WECLAW_API_ADDR: 0.0.0.0:18011
       WECLAW_LOG_FILE: /var/log/weclaw/weclaw-2.log
+      WECLAW_RESTART_ON_SEND_FAILURES: "3"
+      WECLAW_RESTART_FAILURE_WINDOW_SECONDS: "3600"
+      WECLAW_RESTART_ON_SESSION_EXPIRED: "1"
     volumes:
       - ./docker-data/weclaw-2:/root/.weclaw
       - ./docker-data/weclaw-logs:/var/log/weclaw

@@ -2,6 +2,8 @@ const http = require('http');
 const https = require('https');
 const { formatTimestamp } = require('./time');
 
+const bindingCooldowns = new Map();
+
 function splitIds(value) {
   if (Array.isArray(value)) return value.flatMap(splitIds);
   return String(value || '')
@@ -85,6 +87,53 @@ function getAdminBinding(weclaw) {
   const adminName = String(weclaw.adminBindingName || '').trim();
   if (!adminName) return null;
   return weclaw.bindings.find((binding) => String(binding.name || '').trim() === adminName) || null;
+}
+
+function bindingKey(binding) {
+  return [binding.name || '', binding.apiUrl || '', binding.to || ''].join('|');
+}
+
+function classifyWeclawError(error) {
+  const message = String((error && error.message) || error || '');
+  if (/ret=-14\b|session timeout|session expired/i.test(message)) return 'session-expired';
+  if (/ret=-2\b/.test(message)) return 'send-limited';
+  return '';
+}
+
+function getCooldownState(binding) {
+  const key = bindingKey(binding);
+  const state = bindingCooldowns.get(key) || { failures: 0, until: 0, reason: '' };
+  return { key, state };
+}
+
+function activeCooldown(binding, now = Date.now()) {
+  const { state } = getCooldownState(binding);
+  return state.until > now ? state : null;
+}
+
+function noteSendSuccess(binding) {
+  bindingCooldowns.delete(bindingKey(binding));
+}
+
+function noteSendFailure(binding, error) {
+  const kind = classifyWeclawError(error);
+  if (!kind) return null;
+
+  const { key, state } = getCooldownState(binding);
+  state.failures += 1;
+  state.reason = kind;
+  const baseMs = kind === 'session-expired' ? 30 * 60 * 1000 : 5 * 60 * 1000;
+  const multiplier = Math.min(6, state.failures);
+  const cooldownMs = Math.min(30 * 60 * 1000, baseMs * multiplier);
+  state.until = Date.now() + cooldownMs;
+  bindingCooldowns.set(key, state);
+  return state;
+}
+
+function formatDuration(ms) {
+  const seconds = Math.max(1, Math.ceil(ms / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  return `${Math.ceil(seconds / 60)}m`;
 }
 
 function truncate(value, maxLength) {
@@ -216,7 +265,21 @@ async function notifyResults(config, results, options = {}) {
   const log = options.log || (() => {});
   const weclaw = getWeclawConfig(config);
   const bindings = getActiveBindings(weclaw);
-  const summary = { sentPosts: 0, sentImages: 0, failedPosts: 0, failedImages: 0, skipped: false };
+  const failedPostIds = new Set();
+  const summary = {
+    sentPosts: 0,
+    sentImages: 0,
+    failedPosts: 0,
+    failedImages: 0,
+    failedPostIds: [],
+    skipped: false
+  };
+
+  function markFailed(post, hasImage) {
+    summary.failedPosts += 1;
+    if (hasImage) summary.failedImages += 1;
+    if (post && post.id) failedPostIds.add(post.id);
+  }
 
   if (!weclaw.enabled) {
     log('WeClaw notification skipped: notifications.weclaw.enabled is false');
@@ -236,6 +299,16 @@ async function notifyResults(config, results, options = {}) {
       for (const binding of bindings) {
         if (!binding.to) {
           log(`WeClaw notification skipped binding=${binding.name || binding.apiUrl}: to is empty`);
+          markFailed(post, Boolean(mediaUrl));
+          continue;
+        }
+
+        const cooldown = activeCooldown(binding);
+        if (cooldown) {
+          markFailed(post, Boolean(mediaUrl));
+          log(
+            `WeClaw notification delayed post=${post.id} binding=${binding.name || binding.apiUrl}: cooldown=${cooldown.reason}, retryAfter=${formatDuration(cooldown.until - Date.now())}`
+          );
           continue;
         }
 
@@ -250,6 +323,7 @@ async function notifyResults(config, results, options = {}) {
 
         try {
           await sendWeclawPayload(binding, payload);
+          noteSendSuccess(binding);
           summary.sentPosts += 1;
           log(`WeClaw text sent post=${post.id} binding=${binding.name || binding.apiUrl}`);
           if (payload.media_url) {
@@ -257,14 +331,20 @@ async function notifyResults(config, results, options = {}) {
             log(`WeClaw image sent post=${post.id} binding=${binding.name || binding.apiUrl}`);
           }
         } catch (error) {
-          summary.failedPosts += 1;
-          if (payload.media_url) summary.failedImages += 1;
+          markFailed(post, Boolean(payload.media_url));
+          const cooldownState = noteSendFailure(binding, error);
           log(`WeClaw notification failed post=${post.id} binding=${binding.name || binding.apiUrl}: ${error.message}`);
+          if (cooldownState) {
+            log(
+              `WeClaw binding cooldown binding=${binding.name || binding.apiUrl}: reason=${cooldownState.reason}, retryAfter=${formatDuration(cooldownState.until - Date.now())}`
+            );
+          }
         }
       }
     }
   }
 
+  summary.failedPostIds = Array.from(failedPostIds);
   return summary;
 }
 
