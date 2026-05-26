@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { connectBrowser } = require('./lib/browser');
 const { getConfigPath, loadConfig, ensureConfig } = require('./lib/config');
-const { WeiboClient } = require('./lib/weibo');
+const { WeiboClient, isRecoverablePageError } = require('./lib/weibo');
 const { StateStore } = require('./lib/state');
 const {
   getWeclawConfig,
@@ -66,6 +66,7 @@ async function checkOnce(config, state, options = {}) {
   const results = [];
   const stateUpdates = [];
   const screenshotFailures = [];
+  let checkError = null;
 
   try {
     for (const user of config.users) {
@@ -126,8 +127,11 @@ async function checkOnce(config, state, options = {}) {
         }
       });
     }
+  } catch (error) {
+    checkError = error;
+    throw error;
   } finally {
-    await session.close();
+    await session.close({ force: checkError && isRecoverablePageError(checkError) });
   }
 
   const notificationSummary = await notifyResults(config, results, {

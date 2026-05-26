@@ -4,6 +4,17 @@ const { spawn } = require('child_process');
 const { chromium } = require('playwright-core');
 const { getTimeZone } = require('./time');
 
+function withTimeout(promise, timeoutMs, message) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    clearTimeout(timer);
+    Promise.resolve(promise).catch(() => {});
+  });
+}
+
 function expandEnv(input) {
   if (!input) return input;
   return input
@@ -199,6 +210,99 @@ async function waitForDebugPort(port, timeoutMs) {
   throw new Error(`Timed out waiting for browser debug port ${port}: ${lastError ? lastError.message : 'unknown'}`);
 }
 
+function waitForChildExit(child, timeoutMs) {
+  if (!child || child.exitCode !== null || child.signalCode) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      child.off('exit', onExit);
+      resolve(false);
+    }, timeoutMs);
+    const onExit = () => {
+      clearTimeout(timer);
+      resolve(true);
+    };
+    child.once('exit', onExit);
+  });
+}
+
+async function terminateChild(child, log, label = 'browser') {
+  if (!child || child.exitCode !== null || child.signalCode) return;
+  try {
+    log(`Terminating ${label} process pid=${child.pid}`);
+    child.kill('SIGTERM');
+  } catch (error) {
+    log(`Could not terminate ${label} process pid=${child.pid}: ${error.message}`);
+    return;
+  }
+
+  const exited = await waitForChildExit(child, 3000);
+  if (exited || child.exitCode !== null || child.signalCode) return;
+
+  try {
+    log(`Force killing ${label} process pid=${child.pid}`);
+    child.kill('SIGKILL');
+  } catch (error) {
+    log(`Could not force kill ${label} process pid=${child.pid}: ${error.message}`);
+  }
+}
+
+function readProcessList() {
+  return new Promise((resolve, reject) => {
+    const child = spawn('ps', ['-eo', 'pid=,args='], {
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    let output = '';
+    let errorOutput = '';
+    child.stdout.on('data', (chunk) => {
+      output += String(chunk);
+    });
+    child.stderr.on('data', (chunk) => {
+      errorOutput += String(chunk);
+    });
+    child.on('error', reject);
+    child.on('exit', (code) => {
+      if (code === 0) {
+        resolve(output);
+      } else {
+        reject(new Error(errorOutput.trim() || `ps exited with code ${code}`));
+      }
+    });
+  });
+}
+
+async function killBrowserProcessesByDebugPort(port, log) {
+  if (process.platform === 'win32' || !isContainer()) return;
+  const marker = `--remote-debugging-port=${port}`;
+  let output = '';
+  try {
+    output = await readProcessList();
+  } catch (error) {
+    log(`Could not list browser processes for debug port cleanup: ${error.message}`);
+    return;
+  }
+
+  for (const line of output.split(/\r?\n/)) {
+    const match = line.trim().match(/^(\d+)\s+(.+)$/);
+    if (!match) continue;
+    const pid = Number(match[1]);
+    const args = match[2] || '';
+    if (!pid || pid === process.pid || !args.includes(marker)) continue;
+    try {
+      log(`Terminating stale browser debug-port process pid=${pid} port=${port}`);
+      process.kill(pid, 'SIGTERM');
+    } catch (error) {
+      log(`Could not terminate stale browser process pid=${pid}: ${error.message}`);
+      continue;
+    }
+    setTimeout(() => {
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch (_) {
+      }
+    }, 3000).unref();
+  }
+}
+
 async function applyPageTimezone(page, timezoneId, log) {
   if (!timezoneId || page.isClosed()) return;
   try {
@@ -225,6 +329,7 @@ async function connectBrowser(browserConfig = {}, log = () => {}) {
   const port = Number(browserConfig.remoteDebuggingPort || 18788);
   const startupTimeoutMs = Number(browserConfig.startupTimeoutMs || 15000);
   const timezoneId = browserConfig.timezoneId || getTimeZone();
+  let launchedChild = null;
 
   try {
     const version = await waitForDebugPort(port, 800);
@@ -275,6 +380,7 @@ async function connectBrowser(browserConfig = {}, log = () => {}) {
         env: { ...process.env, TZ: timezoneId },
         windowsHide: process.platform === 'win32' ? false : undefined
       });
+      launchedChild = child;
       if (child.stdout) child.stdout.on('data', (chunk) => log(`[browser:out] ${String(chunk).trim()}`));
       if (child.stderr) child.stderr.on('data', (chunk) => log(`[browser:err] ${String(chunk).trim()}`));
       child.on('error', (error) => log(`Browser process error: ${error.message}`));
@@ -288,6 +394,8 @@ async function connectBrowser(browserConfig = {}, log = () => {}) {
       } catch (error) {
         errors.push(`${executable}: ${error.message}`);
         log('Browser debug port was not ready; trying next candidate.');
+        await terminateChild(child, log);
+        launchedChild = null;
       }
     }
 
@@ -307,7 +415,18 @@ async function connectBrowser(browserConfig = {}, log = () => {}) {
   return {
     browser,
     context,
-    async close() {
+    managed: Boolean(launchedChild),
+    async close(options = {}) {
+      const force = Boolean(options.force);
+      if (force) {
+        await withTimeout(browser.close(), 3000, 'browser close timed out').catch((error) => {
+          log(`Browser close failed during forced reset: ${error.message}`);
+        });
+        await terminateChild(launchedChild, log);
+        await killBrowserProcessesByDebugPort(port, log);
+        return;
+      }
+
       await browser.close();
     }
   };

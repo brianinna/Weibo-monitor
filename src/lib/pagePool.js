@@ -1,3 +1,23 @@
+function withTimeout(promise, timeoutMs, message) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    clearTimeout(timer);
+    Promise.resolve(promise).catch(() => {});
+  });
+}
+
+async function closePageQuietly(page, log, timeoutMs = 3000) {
+  if (!page || page.isClosed()) return;
+  try {
+    await withTimeout(page.close(), timeoutMs, `page close timed out after ${timeoutMs}ms`);
+  } catch (error) {
+    log(`page close skipped: ${error.message}`);
+  }
+}
+
 class PagePool {
   constructor(context, options = {}) {
     this.context = context;
@@ -35,13 +55,13 @@ class PagePool {
     const page = this.pages.get(key);
     if (!page) return;
     this.pages.delete(key);
-    await page.close().catch(() => {});
+    await closePageQuietly(page, this.log);
   }
 
   async clear() {
     const pages = Array.from(this.pages.values());
     this.pages.clear();
-    await Promise.all(pages.map((page) => page.close().catch(() => {})));
+    await Promise.all(pages.map((page) => closePageQuietly(page, this.log)));
   }
 }
 

@@ -36,6 +36,7 @@ let loginPage = null;
 let monitorTimer = null;
 let weclawGuardTimer = null;
 let monitorRunning = false;
+let monitorFailureStreak = 0;
 let weclawProcess = null;
 const runtimeLogs = [];
 
@@ -50,18 +51,30 @@ function firstErrorLine(error) {
   return String((error && error.message) || error || '').split(/\r?\n/)[0];
 }
 
-async function resetBrowserSession(reason) {
+async function resetBrowserSession(reason, options = {}) {
   const session = browserSession;
+  const pool = pagePool;
   browserSession = null;
   pagePool = null;
   loginPage = null;
   if (reason) addLog(`browser session reset: ${reason}`);
+  if (pool) {
+    try {
+      await pool.clear();
+    } catch (error) {
+      addLog(`browser page pool cleanup failed: ${error.message}`);
+    }
+  }
   if (session && session.browser) {
     try {
-      if (typeof session.browser.disconnect === 'function') {
+      if (typeof session.close === 'function') {
+        await session.close({ force: options.force !== false });
+      } else if (typeof session.browser.close === 'function') {
+        await session.browser.close();
+      } else if (typeof session.browser.disconnect === 'function') {
         session.browser.disconnect();
       } else {
-        await session.browser.close();
+        addLog('browser session reset skipped: no close or disconnect method');
       }
     } catch (error) {
       addLog(`browser session reset cleanup failed: ${error.message}`);
@@ -528,17 +541,22 @@ async function runScheduledCheck(reason) {
     addLog(`monitor start reason=${reason}`);
     config = readConfig();
     const results = await checkOnce(config);
+    monitorFailureStreak = 0;
     const freshTotal = results.reduce((sum, item) => sum + item.freshCount, 0);
     addLog(`monitor done reason=${reason}, users=${results.length}, fresh=${freshTotal}`);
   } catch (error) {
+    monitorFailureStreak += 1;
     addLog(`monitor failed reason=${reason}: ${error.stack || error.message}`);
     try {
       await notifyMonitorError(config || readConfig(), error, weclawNotifyOptions({ reason }));
     } catch (alertError) {
       addLog(`monitor alert failed reason=${reason}: ${alertError.message}`);
     }
-    if (isRecoverablePageError(error)) {
-      await resetBrowserSession(`recoverable monitor failure: ${firstErrorLine(error)}`);
+    if (isRecoverablePageError(error) || monitorFailureStreak >= 3) {
+      await resetBrowserSession(
+        `monitor failure recovery streak=${monitorFailureStreak}: ${firstErrorLine(error)}`,
+        { force: true }
+      );
     }
   } finally {
     monitorRunning = false;

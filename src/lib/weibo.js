@@ -49,7 +49,7 @@ async function closePageQuietly(page, timeoutMs = 3000) {
 
 function isRecoverablePageError(error) {
   const message = String((error && error.message) || error || '');
-  return /Page crashed|Target page, context or browser has been closed|Target closed|Browser has been closed|browser has disconnected|Session closed/i.test(message);
+  return /Page crashed|Target page, context or browser has been closed|Target closed|Browser has been closed|browser has disconnected|Session closed|page\.(goto|reload): Timeout|waiting for navigation until|Navigation timeout/i.test(message);
 }
 
 class WeiboClient {
