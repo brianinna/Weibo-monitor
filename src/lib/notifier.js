@@ -114,6 +114,43 @@ function bindingKey(binding) {
   return [binding.name || '', binding.apiUrl || '', binding.to || ''].join('|');
 }
 
+function parseBindingKey(key) {
+  const [name = '', apiUrl = '', to = ''] = String(key || '').split('|');
+  return { name, apiUrl, to };
+}
+
+function normalizeIdentity(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function bindingIdentityMatches(target = {}, candidate = {}) {
+  const targetName = normalizeIdentity(target.name);
+  const targetApiUrl = normalizeIdentity(target.apiUrl);
+  const targetTo = normalizeIdentity(target.to);
+  const candidateName = normalizeIdentity(candidate.name);
+  const candidateApiUrl = normalizeIdentity(candidate.apiUrl);
+  const candidateTo = normalizeIdentity(candidate.to);
+
+  const nameMatch = targetName && candidateName && targetName === candidateName;
+  const apiUrlMatch = targetApiUrl && candidateApiUrl && targetApiUrl === candidateApiUrl;
+  const toMatch = targetTo && candidateTo && targetTo === candidateTo;
+
+  if (targetName || targetApiUrl) return Boolean(nameMatch || apiUrlMatch);
+  return Boolean(toMatch);
+}
+
+function normalizeStateResetBinding(binding, weclaw) {
+  const input = binding || {};
+  const normalized = normalizeBinding(input, {
+    apiUrl: (weclaw && weclaw.apiUrl) || 'http://127.0.0.1:18011/api/send',
+    logFile: (weclaw && weclaw.logFile) || '',
+    dataDir: (weclaw && weclaw.dataDir) || ''
+  });
+  if (!input.name) normalized.name = '';
+  if (!input.apiUrl) normalized.apiUrl = '';
+  return normalized;
+}
+
 function classifyWeclawError(error) {
   const message = String((error && error.message) || error || '');
   if (/ret=-14\b|session timeout|session expired/i.test(message)) return 'session-expired';
@@ -134,6 +171,17 @@ function activeCooldown(binding, now = Date.now()) {
 
 function noteSendSuccess(binding) {
   bindingCooldowns.delete(bindingKey(binding));
+}
+
+function resetBindingCooldown(binding) {
+  let resetCount = 0;
+  for (const key of Array.from(bindingCooldowns.keys())) {
+    if (key === bindingKey(binding) || bindingIdentityMatches(binding, parseBindingKey(key))) {
+      bindingCooldowns.delete(key);
+      resetCount += 1;
+    }
+  }
+  return resetCount;
 }
 
 function noteSendFailure(binding, error) {
@@ -480,6 +528,7 @@ async function sendWeclawTest(config, options = {}) {
         to: binding.to,
         text: options.text || `微博监控测试消息：${formatTimestamp()}`
       });
+      noteSendSuccess(binding);
       guard.recordSent(binding, 1, log);
       sent += 1;
     } catch (error) {
@@ -498,6 +547,16 @@ function runWeclawConversationGuardReminderCheck(config, options = {}) {
   return runWeclawGuardReminderCheck(getWeclawConfig(config), options);
 }
 
+function resetWeclawBindingNotificationState(config, binding, options = {}) {
+  const weclaw = getWeclawConfig(config);
+  const target = normalizeStateResetBinding(binding, weclaw);
+  const cooldowns = resetBindingCooldown(target);
+  const guard = new WeclawConversationGuard(weclaw, options);
+  const guardStates = guard.resetBinding(target);
+  guard.save();
+  return { ok: true, cooldowns, guardStates, binding: target.name || target.apiUrl || target.to || '' };
+}
+
 module.exports = {
   getWeclawConfig,
   normalizeBinding,
@@ -505,6 +564,7 @@ module.exports = {
   checkWeclawHealth,
   notifyMonitorError,
   notifyResults,
+  resetWeclawBindingNotificationState,
   runWeclawConversationGuardReminderCheck,
   sendWeclawPayload,
   sendWeclawTest

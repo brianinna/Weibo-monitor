@@ -33,6 +33,31 @@ function bindingKey(binding) {
   return [binding.name || '', binding.apiUrl || '', binding.to || ''].join('|');
 }
 
+function parseBindingKey(key) {
+  const [name = '', apiUrl = '', to = ''] = String(key || '').split('|');
+  return { name, apiUrl, to };
+}
+
+function normalizeIdentity(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function bindingMatches(target = {}, candidate = {}) {
+  const targetName = normalizeIdentity(target.name);
+  const targetApiUrl = normalizeIdentity(target.apiUrl);
+  const targetTo = normalizeIdentity(target.to);
+  const candidateName = normalizeIdentity(candidate.name);
+  const candidateApiUrl = normalizeIdentity(candidate.apiUrl);
+  const candidateTo = normalizeIdentity(candidate.to);
+
+  const nameMatch = targetName && candidateName && targetName === candidateName;
+  const apiUrlMatch = targetApiUrl && candidateApiUrl && targetApiUrl === candidateApiUrl;
+  const toMatch = targetTo && candidateTo && targetTo === candidateTo;
+
+  if (targetName || targetApiUrl) return Boolean(nameMatch || apiUrlMatch);
+  return Boolean(toMatch);
+}
+
 function bindingLabel(binding) {
   return binding.name || binding.to || binding.apiUrl || 'weclaw';
 }
@@ -420,6 +445,20 @@ class WeclawConversationGuard {
     }
 
     return null;
+  }
+
+  resetBinding(binding) {
+    this.load();
+    let resetCount = 0;
+    for (const [key, value] of Object.entries(this.state.bindings || {})) {
+      const storedBinding = (value && value.binding) || parseBindingKey(key);
+      if (key === bindingKey(binding) || bindingMatches(binding, storedBinding)) {
+        delete this.state.bindings[key];
+        resetCount += 1;
+      }
+    }
+    if (resetCount > 0) this.dirty = true;
+    return resetCount;
   }
 }
 

@@ -215,7 +215,12 @@ function renderWeclawBindings() {
       const current = collectBindingFromRow(row);
       $('weclawStatus').textContent = `正在识别 ${current.name} 最近发信人...`;
       try {
-        const data = await api(`/api/weclaw/last-sender?logFile=${encodeURIComponent(current.logFile)}`);
+        const params = new URLSearchParams({
+          logFile: current.logFile || '',
+          name: current.name || '',
+          apiUrl: current.apiUrl || ''
+        });
+        const data = await api(`/api/weclaw/last-sender?${params.toString()}`);
         row.querySelector('[data-field="to"]').value = data.to;
         renderAdminBindingOptions();
         await saveConfig(false);

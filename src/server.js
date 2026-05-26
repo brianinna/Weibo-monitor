@@ -17,6 +17,7 @@ const {
   normalizeBinding,
   notifyMonitorError,
   notifyResults,
+  resetWeclawBindingNotificationState,
   runWeclawConversationGuardReminderCheck,
   sendWeclawTest
 } = require('./lib/notifier');
@@ -214,11 +215,13 @@ function clearWeclawBindingData(binding) {
   clearDirectoryContents(dataDir);
   fs.mkdirSync(path.dirname(logFile), { recursive: true });
   fs.writeFileSync(logFile, '', 'utf8');
+  const notificationState = resetWeclawNotificationStateForBinding(normalized, 'rebind');
   return {
     ok: true,
     name: normalized.name,
     dataDir,
     logFile,
+    notificationState,
     restartCommand: `docker compose up -d --no-deps --force-recreate ${containerName}`,
     message: `已清空 ${normalized.name || 'WeClaw'} 的登录数据和日志，可用于重新绑定。正在运行的 WeClaw 容器不会自动失效，必须重建对应容器后才会重新出扫码。`
   };
@@ -374,6 +377,21 @@ function weclawNotifyOptions(extra = {}) {
     ...weclawGuardOptions(),
     ...extra
   };
+}
+
+function resetWeclawNotificationStateForBinding(binding, reason) {
+  try {
+    const result = resetWeclawBindingNotificationState(readConfig(), binding, weclawNotifyOptions());
+    addLog(
+      `WeClaw notification state reset binding=${binding.name || binding.apiUrl || binding.to || 'unknown'} reason=${reason}: cooldowns=${result.cooldowns}, guardStates=${result.guardStates}`
+    );
+    return result;
+  } catch (error) {
+    addLog(
+      `WeClaw notification state reset failed binding=${binding.name || binding.apiUrl || binding.to || 'unknown'} reason=${reason}: ${error.message}`
+    );
+    return { ok: false, error: error.message };
+  }
 }
 
 function runWeclawGuardReminder(reason) {
@@ -690,7 +708,16 @@ async function handleApi(req, res) {
           logFile: resolveWeclawLogFile(url.searchParams.get('logFile'))
         });
       }
-      return sendJson(res, 200, sender);
+      const notificationState = resetWeclawNotificationStateForBinding(
+        {
+          name: url.searchParams.get('name') || '',
+          apiUrl: url.searchParams.get('apiUrl') || '',
+          to: sender.to,
+          logFile: url.searchParams.get('logFile') || ''
+        },
+        'last-sender'
+      );
+      return sendJson(res, 200, { ...sender, notificationState });
     } catch (error) {
       return sendJson(res, 500, { error: error.message });
     }
