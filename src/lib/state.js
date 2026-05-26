@@ -17,9 +17,20 @@ class StateStore {
     }
   }
 
-  getUserPostIds(uid) {
+  getUserPostIds(uid, options = {}) {
     const user = this.state.users[uid];
-    return new Set((user && user.posts ? user.posts : []).map((post) => post.id));
+    const includePending = options.includePending === true;
+    return new Set(
+      (user && user.posts ? user.posts : [])
+        .filter((post) => includePending || !post.notificationPending)
+        .map((post) => post.id)
+    );
+  }
+
+  getPendingNotificationPosts(uid) {
+    const user = this.state.users[uid];
+    const posts = user && user.posts ? user.posts : [];
+    return posts.filter((post) => post.notificationPending);
   }
 
   getLatestPost(uid) {
@@ -28,14 +39,29 @@ class StateStore {
     return posts[0] || null;
   }
 
-  upsertPosts(uid, posts) {
+  upsertPosts(uid, posts, options = {}) {
     if (!this.state.users[uid]) this.state.users[uid] = { posts: [] };
     const now = new Date().toISOString();
     const existing = new Map(this.state.users[uid].posts.map((post) => [post.id, post]));
     const fresh = [];
+    const pendingNotificationIds = new Set(options.pendingNotificationIds || []);
+    const deliveredNotificationIds = new Set(options.deliveredNotificationIds || []);
 
     for (const post of posts) {
       const old = existing.get(post.id);
+      const oldAttempts = old && Number.isFinite(Number(old.notificationAttempts)) ? Number(old.notificationAttempts) : 0;
+      const notificationPatch = {};
+      if (pendingNotificationIds.has(post.id)) {
+        notificationPatch.notificationPending = true;
+        notificationPatch.notificationFailedAt = now;
+        notificationPatch.notificationLastAttemptAt = now;
+        notificationPatch.notificationAttempts = oldAttempts + 1;
+      } else if (deliveredNotificationIds.has(post.id)) {
+        notificationPatch.notificationPending = false;
+        notificationPatch.notificationDeliveredAt = now;
+        notificationPatch.notificationLastAttemptAt = now;
+      }
+
       if (!old) {
         fresh.push(post);
         existing.set(post.id, {
@@ -49,7 +75,8 @@ class StateStore {
           screenshot: post.screenshot || '',
           firstSeenAt: now,
           lastSeenAt: now,
-          status: 'active'
+          status: 'active',
+          ...notificationPatch
         });
       } else {
         existing.set(post.id, {
@@ -62,7 +89,8 @@ class StateStore {
           url: post.url || old.url,
           screenshot: post.screenshot || old.screenshot || '',
           lastSeenAt: now,
-          status: 'active'
+          status: 'active',
+          ...notificationPatch
         });
       }
     }

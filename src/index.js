@@ -42,6 +42,10 @@ function uniquePosts(posts) {
   return unique;
 }
 
+function idsMinus(left, right) {
+  return Array.from(left).filter((id) => !right.has(id));
+}
+
 function getFreshPosts(scan, posts, knownIds, notifyOnFirstRun) {
   if (knownIds.size === 0 && !notifyOnFirstRun) return [];
   if (Array.isArray(scan.newPosts)) return scan.newPosts;
@@ -79,13 +83,14 @@ async function checkOnce(config, state, options = {}) {
       const label = user.name || uid;
       log(`检查 ${label} (${uid})`);
       const knownIds = state.getUserPostIds(uid);
+      const pendingNotificationPosts = state.getPendingNotificationPosts(uid);
       const scan = await client.fetchRecentPostsUntilKnown(uid, {
         knownIds,
         limit: config.monitor.maxPostsPerUser,
         maxPages: config.monitor.maxScanPages
       });
       const posts = scan.posts;
-      const fresh = getFreshPosts(scan, posts, knownIds, config.monitor.notifyOnFirstRun);
+      const fresh = uniquePosts([...getFreshPosts(scan, posts, knownIds, config.monitor.notifyOnFirstRun), ...pendingNotificationPosts]);
 
       const screenshotDir = path.join(ROOT, 'data', 'screenshots', uid);
       const screenshotTargets = uniquePosts([...posts.slice(0, config.monitor.maxPostsPerUser), ...fresh]);
@@ -97,7 +102,7 @@ async function checkOnce(config, state, options = {}) {
       }
       stateUpdates.push({
         uid,
-        posts: scan.scannedPosts || posts,
+        posts: uniquePosts([...(scan.scannedPosts || posts), ...pendingNotificationPosts]),
         freshIds: new Set(fresh.map((post) => post.id))
       });
 
@@ -147,15 +152,17 @@ async function checkOnce(config, state, options = {}) {
   const failedPostIds = new Set(notificationSummary.failedPostIds || []);
   for (const update of stateUpdates) {
     const hasFailedFresh = Array.from(update.freshIds).some((id) => failedPostIds.has(id));
-    const postsToPersist = hasFailedFresh
-      ? update.posts.filter((post) => !update.freshIds.has(post.id))
-      : update.posts;
+    const pendingNotificationIds = hasFailedFresh ? Array.from(update.freshIds).filter((id) => failedPostIds.has(id)) : [];
+    const deliveredNotificationIds = notificationSummary.skipped ? [] : idsMinus(update.freshIds, failedPostIds);
 
     if (hasFailedFresh) {
-      log(`uid=${update.uid} pending notification retry posts=${Array.from(update.freshIds).join(', ')}`);
+      log(`uid=${update.uid} pending notification retry posts=${pendingNotificationIds.join(', ')}`);
     }
 
-    state.upsertPosts(update.uid, postsToPersist);
+    state.upsertPosts(update.uid, update.posts, {
+      pendingNotificationIds,
+      deliveredNotificationIds
+    });
   }
   await state.save();
 
