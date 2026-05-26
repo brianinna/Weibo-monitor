@@ -1,6 +1,12 @@
 const http = require('http');
 const https = require('https');
 const { formatTimestamp } = require('./time');
+const {
+  WeclawConversationGuard,
+  appendConversationReminder,
+  countPayloadMessages,
+  runWeclawGuardReminderCheck
+} = require('./weclawGuard');
 
 const bindingCooldowns = new Map();
 
@@ -58,6 +64,15 @@ function getWeclawBindings(weclaw) {
 
 function getWeclawConfig(config) {
   const weclaw = config && config.notifications && config.notifications.weclaw;
+  const defaultConversationGuard = {
+    enabled: true,
+    maxOutboundMessages: 10,
+    requiredUserMessageHours: 24,
+    reminderIntervalMinutes: 30,
+    reminderLeadMinutes: 60,
+    requireKnownUserMessage: true,
+    stateFile: ''
+  };
   const merged = {
     enabled: false,
     apiUrl: 'http://127.0.0.1:18011/api/send',
@@ -65,12 +80,18 @@ function getWeclawConfig(config) {
     bindings: [],
     adminBindingName: '',
     sendImages: true,
+    conversationGuard: defaultConversationGuard,
     mediaHost: '127.0.0.1',
     mediaPort: 18789,
     managedBy: '',
     command: 'weclaw',
     startArgs: ['start', '-f'],
     ...(weclaw || {})
+  };
+  merged.conversationGuard = {
+    ...defaultConversationGuard,
+    ...((weclaw && weclaw.guard) || {}),
+    ...((weclaw && weclaw.conversationGuard) || {})
   };
   merged.bindings = getWeclawBindings(merged);
   merged.apiUrl = merged.bindings[0] ? merged.bindings[0].apiUrl : merged.apiUrl;
@@ -265,6 +286,7 @@ async function notifyResults(config, results, options = {}) {
   const log = options.log || (() => {});
   const weclaw = getWeclawConfig(config);
   const bindings = getActiveBindings(weclaw);
+  const guard = new WeclawConversationGuard(weclaw, options);
   const failedPostIds = new Set();
   const summary = {
     sentPosts: 0,
@@ -303,15 +325,6 @@ async function notifyResults(config, results, options = {}) {
           continue;
         }
 
-        const cooldown = activeCooldown(binding);
-        if (cooldown) {
-          markFailed(post, Boolean(mediaUrl));
-          log(
-            `WeClaw notification delayed post=${post.id} binding=${binding.name || binding.apiUrl}: cooldown=${cooldown.reason}, retryAfter=${formatDuration(cooldown.until - Date.now())}`
-          );
-          continue;
-        }
-
         const text = buildPostText(result.user || {}, post);
         const payload = {
           to: binding.to,
@@ -321,9 +334,32 @@ async function notifyResults(config, results, options = {}) {
           payload.media_url = mediaUrl;
         }
 
+        const outboundMessages = countPayloadMessages(payload);
+        const guardDecision = guard.beforeSend(binding, outboundMessages, log);
+        if (!guardDecision.ok) {
+          markFailed(post, Boolean(payload.media_url));
+          log(
+            `WeClaw notification delayed post=${post.id} binding=${binding.name || binding.apiUrl}: conversationGuard=${guardDecision.reason}, detail=${guardDecision.message}`
+          );
+          continue;
+        }
+        if (guardDecision.appendReminder) {
+          payload.text = appendConversationReminder(payload.text);
+        }
+
+        const cooldown = activeCooldown(binding);
+        if (cooldown) {
+          markFailed(post, Boolean(mediaUrl));
+          log(
+            `WeClaw notification delayed post=${post.id} binding=${binding.name || binding.apiUrl}: cooldown=${cooldown.reason}, retryAfter=${formatDuration(cooldown.until - Date.now())}`
+          );
+          continue;
+        }
+
         try {
           await sendWeclawPayload(binding, payload);
           noteSendSuccess(binding);
+          guard.recordSent(binding, outboundMessages, log);
           summary.sentPosts += 1;
           log(`WeClaw text sent post=${post.id} binding=${binding.name || binding.apiUrl}`);
           if (payload.media_url) {
@@ -344,6 +380,7 @@ async function notifyResults(config, results, options = {}) {
     }
   }
 
+  guard.save();
   summary.failedPostIds = Array.from(failedPostIds);
   return summary;
 }
@@ -352,6 +389,7 @@ async function notifyMonitorError(config, error, options = {}) {
   const log = options.log || (() => {});
   const weclaw = getWeclawConfig(config);
   const binding = getAdminBinding(weclaw);
+  const guard = new WeclawConversationGuard(weclaw, options);
 
   if (!binding) {
     log('WeClaw admin alert skipped: no admin binding selected');
@@ -370,8 +408,26 @@ async function notifyMonitorError(config, error, options = {}) {
     return { ok: false, skipped: true, reason: 'to-empty' };
   }
 
+  const payload = {
+    to: binding.to,
+    text: buildMonitorErrorText(error, options)
+  };
+  const outboundMessages = countPayloadMessages(payload);
+  const guardDecision = guard.beforeSend(binding, outboundMessages, log);
+  if (!guardDecision.ok) {
+    guard.save();
+    log(
+      `WeClaw admin alert delayed binding=${binding.name || binding.apiUrl}: conversationGuard=${guardDecision.reason}, detail=${guardDecision.message}`
+    );
+    return { ok: false, skipped: true, reason: 'conversation-required' };
+  }
+  if (guardDecision.appendReminder) {
+    payload.text = appendConversationReminder(payload.text);
+  }
+
   const cooldown = activeCooldown(binding);
   if (cooldown) {
+    guard.save();
     log(
       `WeClaw admin alert delayed binding=${binding.name || binding.apiUrl}: cooldown=${cooldown.reason}, retryAfter=${formatDuration(cooldown.until - Date.now())}`
     );
@@ -379,14 +435,14 @@ async function notifyMonitorError(config, error, options = {}) {
   }
 
   try {
-    await sendWeclawPayload(binding, {
-      to: binding.to,
-      text: buildMonitorErrorText(error, options)
-    });
+    await sendWeclawPayload(binding, payload);
     noteSendSuccess(binding);
+    guard.recordSent(binding, outboundMessages, log);
+    guard.save();
     log(`WeClaw admin alert sent binding=${binding.name || binding.apiUrl}`);
     return { ok: true, skipped: false, binding: binding.name || binding.apiUrl };
   } catch (sendError) {
+    guard.save();
     const cooldownState = noteSendFailure(binding, sendError);
     log(`WeClaw admin alert failed binding=${binding.name || binding.apiUrl}: ${sendError.message}`);
     if (cooldownState) {
@@ -401,6 +457,8 @@ async function notifyMonitorError(config, error, options = {}) {
 async function sendWeclawTest(config, options = {}) {
   const weclaw = getWeclawConfig(config);
   const bindings = options.binding ? [normalizeBinding(options.binding)] : getActiveBindings(weclaw);
+  const guard = new WeclawConversationGuard(weclaw, options);
+  const log = options.log || (() => {});
   if (bindings.length === 0) throw new Error('没有启用的 WeClaw 绑定。');
 
   const failures = [];
@@ -410,21 +468,34 @@ async function sendWeclawTest(config, options = {}) {
       failures.push(`${binding.name || binding.apiUrl}: 接收人 ID 为空`);
       continue;
     }
+    const guardDecision = guard.beforeSend(binding, 1, log);
+    if (!guardDecision.ok) {
+      failures.push(
+        `${binding.name || binding.apiUrl}: WeClaw conversation guard ${guardDecision.reason}: ${guardDecision.message}`
+      );
+      continue;
+    }
     try {
       await sendWeclawPayload(binding, {
         to: binding.to,
         text: options.text || `微博监控测试消息：${formatTimestamp()}`
       });
+      guard.recordSent(binding, 1, log);
       sent += 1;
     } catch (error) {
       failures.push(`${binding.name || binding.apiUrl}: ${error.message}`);
     }
   }
 
+  guard.save();
   if (failures.length > 0) {
     throw new Error(`测试消息发送失败：成功 ${sent}/${bindings.length}；${failures[0]}`);
   }
   return { ok: true, sentBindings: sent };
+}
+
+function runWeclawConversationGuardReminderCheck(config, options = {}) {
+  return runWeclawGuardReminderCheck(getWeclawConfig(config), options);
 }
 
 module.exports = {
@@ -434,6 +505,7 @@ module.exports = {
   checkWeclawHealth,
   notifyMonitorError,
   notifyResults,
+  runWeclawConversationGuardReminderCheck,
   sendWeclawPayload,
   sendWeclawTest
 };

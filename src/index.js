@@ -4,7 +4,12 @@ const { connectBrowser } = require('./lib/browser');
 const { getConfigPath, loadConfig, ensureConfig } = require('./lib/config');
 const { WeiboClient } = require('./lib/weibo');
 const { StateStore } = require('./lib/state');
-const { getWeclawConfig, notifyMonitorError, notifyResults } = require('./lib/notifier');
+const {
+  getWeclawConfig,
+  notifyMonitorError,
+  notifyResults,
+  runWeclawConversationGuardReminderCheck
+} = require('./lib/notifier');
 const { startScreenshotServer } = require('./lib/screenshotServer');
 const { formatTimestamp } = require('./lib/time');
 
@@ -16,6 +21,14 @@ function log(message) {
 
 function firstErrorLine(error) {
   return String((error && error.message) || error || '').split(/\r?\n/)[0];
+}
+
+function weclawNotifyOptions(extra = {}) {
+  return {
+    root: ROOT,
+    log,
+    ...extra
+  };
 }
 
 function uniquePosts(posts) {
@@ -118,7 +131,7 @@ async function checkOnce(config, state, options = {}) {
   }
 
   const notificationSummary = await notifyResults(config, results, {
-    log,
+    ...weclawNotifyOptions(),
     mediaBaseUrl: options.mediaBaseUrl
   });
   if (!notificationSummary.skipped) {
@@ -158,10 +171,7 @@ async function checkOnce(config, state, options = {}) {
     );
   }
   if (warningLines.length > 0) {
-    await notifyMonitorError(config, new Error(warningLines.filter(Boolean).join('\n')), {
-      log,
-      reason: 'degraded'
-    });
+    await notifyMonitorError(config, new Error(warningLines.filter(Boolean).join('\n')), weclawNotifyOptions({ reason: 'degraded' }));
   }
 
   return results;
@@ -179,12 +189,22 @@ async function monitorLoop() {
   const intervalMs = Math.max(30, Number(config.monitor.checkIntervalSeconds || 300)) * 1000;
   log(`开始监控，间隔 ${Math.round(intervalMs / 1000)} 秒`);
 
+  const guardReminderTimer = setInterval(() => {
+    try {
+      runWeclawConversationGuardReminderCheck(config, weclawNotifyOptions());
+    } catch (error) {
+      log(`WeClaw conversation guard reminder check failed: ${error.message}`);
+    }
+  }, 60 * 1000);
+  if (typeof guardReminderTimer.unref === 'function') guardReminderTimer.unref();
+  runWeclawConversationGuardReminderCheck(config, weclawNotifyOptions());
+
   while (true) {
     try {
       await checkOnce(config, state, { mediaBaseUrl: mediaServer && mediaServer.publicBaseUrl });
     } catch (error) {
       log(`检查失败: ${error.stack || error.message}`);
-      await notifyMonitorError(config, error, { log, reason: 'interval' });
+      await notifyMonitorError(config, error, weclawNotifyOptions({ reason: 'interval' }));
     }
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }

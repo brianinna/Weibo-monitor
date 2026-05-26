@@ -10,7 +10,16 @@ const { parseWeiboUser } = require('./lib/user');
 const { StateStore } = require('./lib/state');
 const { PagePool } = require('./lib/pagePool');
 const { serveScreenshot } = require('./lib/screenshotServer');
-const { checkWeclawBindingHealth, checkWeclawHealth, getWeclawConfig, normalizeBinding, notifyMonitorError, notifyResults, sendWeclawTest } = require('./lib/notifier');
+const {
+  checkWeclawBindingHealth,
+  checkWeclawHealth,
+  getWeclawConfig,
+  normalizeBinding,
+  notifyMonitorError,
+  notifyResults,
+  runWeclawConversationGuardReminderCheck,
+  sendWeclawTest
+} = require('./lib/notifier');
 const { formatTimestamp } = require('./lib/time');
 
 const ROOT = path.resolve(__dirname, '..');
@@ -25,6 +34,7 @@ let browserSession = null;
 let pagePool = null;
 let loginPage = null;
 let monitorTimer = null;
+let weclawGuardTimer = null;
 let monitorRunning = false;
 let weclawProcess = null;
 const runtimeLogs = [];
@@ -334,6 +344,37 @@ function getMediaBaseUrl(config) {
   return `http://${host}:${PORT}`;
 }
 
+function weclawGuardOptions() {
+  return {
+    root: ROOT,
+    log: addLog,
+    weclawRuntimeLogText: runtimeLogs.join('\n')
+  };
+}
+
+function weclawNotifyOptions(extra = {}) {
+  return {
+    ...weclawGuardOptions(),
+    ...extra
+  };
+}
+
+function runWeclawGuardReminder(reason) {
+  try {
+    runWeclawConversationGuardReminderCheck(readConfig(), weclawGuardOptions());
+  } catch (error) {
+    addLog(`WeClaw conversation guard reminder check failed reason=${reason}: ${error.message}`);
+  }
+}
+
+function startWeclawGuardReminderScheduler() {
+  if (weclawGuardTimer) clearInterval(weclawGuardTimer);
+  weclawGuardTimer = setInterval(() => {
+    runWeclawGuardReminder('timer');
+  }, 60 * 1000);
+  runWeclawGuardReminder('startup');
+}
+
 function startWeclaw(config) {
   if (weclawProcess && !weclawProcess.killed) {
     return { ok: true, started: false, message: 'WeClaw is already starting or running from this UI process.' };
@@ -430,7 +471,9 @@ async function checkOnce(config) {
 
   const notificationSummary = await notifyResults(config, results, {
     log: addLog,
-    mediaBaseUrl: getMediaBaseUrl(config)
+    mediaBaseUrl: getMediaBaseUrl(config),
+    root: ROOT,
+    weclawRuntimeLogText: runtimeLogs.join('\n')
   });
   if (!notificationSummary.skipped) {
     addLog(
@@ -469,10 +512,7 @@ async function checkOnce(config) {
     );
   }
   if (warningLines.length > 0) {
-    await notifyMonitorError(config, new Error(warningLines.filter(Boolean).join('\n')), {
-      log: addLog,
-      reason: 'degraded'
-    });
+    await notifyMonitorError(config, new Error(warningLines.filter(Boolean).join('\n')), weclawNotifyOptions({ reason: 'degraded' }));
   }
   return results;
 }
@@ -493,7 +533,7 @@ async function runScheduledCheck(reason) {
   } catch (error) {
     addLog(`monitor failed reason=${reason}: ${error.stack || error.message}`);
     try {
-      await notifyMonitorError(config || readConfig(), error, { log: addLog, reason });
+      await notifyMonitorError(config || readConfig(), error, weclawNotifyOptions({ reason }));
     } catch (alertError) {
       addLog(`monitor alert failed reason=${reason}: ${alertError.message}`);
     }
@@ -594,6 +634,7 @@ async function handleApi(req, res) {
     config.users = Array.isArray(body.users) ? body.users : config.users;
     writeConfig(config);
     startMonitorScheduler();
+    startWeclawGuardReminderScheduler();
     return sendJson(res, 200, { ok: true, config });
   }
 
@@ -659,7 +700,7 @@ async function handleApi(req, res) {
   if (req.method === 'POST' && url.pathname === '/api/notify/test') {
     try {
       const body = await readBody(req);
-      return sendJson(res, 200, await sendWeclawTest(readConfig(), body || {}));
+      return sendJson(res, 200, await sendWeclawTest(readConfig(), weclawNotifyOptions(body || {})));
     } catch (error) {
       return sendJson(res, 500, { error: error.message });
     }
@@ -695,7 +736,7 @@ async function handleApi(req, res) {
       return sendJson(res, 200, { results: await checkOnce(config) });
     } catch (error) {
       try {
-        await notifyMonitorError(config || readConfig(), error, { log: addLog, reason: 'manual' });
+        await notifyMonitorError(config || readConfig(), error, weclawNotifyOptions({ reason: 'manual' }));
       } catch (alertError) {
         addLog(`manual check alert failed: ${alertError.message}`);
       }
@@ -741,4 +782,5 @@ server.listen(PORT, HOST, () => {
   }
 
   startMonitorScheduler();
+  startWeclawGuardReminderScheduler();
 });

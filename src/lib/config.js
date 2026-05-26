@@ -51,6 +51,15 @@ function loadConfig(root) {
       bindings: [],
       adminBindingName: '',
       sendImages: true,
+      conversationGuard: {
+        enabled: true,
+        maxOutboundMessages: 10,
+        requiredUserMessageHours: 24,
+        reminderIntervalMinutes: 30,
+        reminderLeadMinutes: 60,
+        requireKnownUserMessage: true,
+        stateFile: ''
+      },
       mediaBaseUrl: '',
       mediaHost: '127.0.0.1',
       mediaPort: 18789,
@@ -66,6 +75,10 @@ function loadConfig(root) {
       ...notificationDefaults.weclaw,
       ...((config.notifications && config.notifications.weclaw) || {})
     }
+  };
+  config.notifications.weclaw.conversationGuard = {
+    ...notificationDefaults.weclaw.conversationGuard,
+    ...(((config.notifications && config.notifications.weclaw) || {}).conversationGuard || {})
   };
 
   if (!Array.isArray(config.users) || config.users.length === 0) {

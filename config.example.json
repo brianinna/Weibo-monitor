@@ -25,6 +25,15 @@
       "bindings": [],
       "adminBindingName": "",
       "sendImages": true,
+      "conversationGuard": {
+        "enabled": true,
+        "maxOutboundMessages": 10,
+        "requiredUserMessageHours": 24,
+        "reminderIntervalMinutes": 30,
+        "reminderLeadMinutes": 60,
+        "requireKnownUserMessage": true,
+        "stateFile": ""
+      },
       "mediaBaseUrl": "",
       "mediaHost": "127.0.0.1",
       "mediaPort": 18789,
