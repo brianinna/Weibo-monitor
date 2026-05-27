@@ -58,6 +58,13 @@ class WeiboClient {
     this.pages = new Map();
     this.pagePool = options.pagePool || null;
     this.log = options.log || (() => {});
+    this.applyPageTimezone = options.applyPageTimezone || (async () => {});
+  }
+
+  async newPage() {
+    const page = await this.context.newPage();
+    await this.applyPageTimezone(page);
+    return page;
   }
 
   async ensurePage(origin) {
@@ -65,7 +72,7 @@ class WeiboClient {
     const existing = this.pages.get(normalized);
     if (existing && !existing.isClosed()) return existing;
 
-    const page = await this.context.newPage();
+    const page = await this.newPage();
     await page.goto(`${normalized}/`, { waitUntil: 'domcontentloaded', timeout: 30000 });
     this.pages.set(normalized, page);
     return page;
@@ -128,7 +135,7 @@ class WeiboClient {
     let lastError;
 
     for (let attempt = 1; attempt <= 2; attempt++) {
-      const page = this.pagePool ? await this.pagePool.getUserPage(uid) : await this.context.newPage();
+      const page = this.pagePool ? await this.pagePool.getUserPage(uid) : await this.newPage();
       try {
         if (!page.url().startsWith(target)) {
           await page.goto(target, {
@@ -333,7 +340,7 @@ class WeiboClient {
     let page;
 
     try {
-      page = await withTimeout(this.context.newPage(), Math.min(5000, remaining()), 'new screenshot page timed out');
+      page = await withTimeout(this.newPage(), Math.min(5000, remaining()), 'new screenshot page timed out');
       await withTimeout(page.setViewportSize({ width: 1280, height: 900 }), Math.min(3000, remaining()), 'set screenshot viewport timed out');
       await withTimeout(
         page.goto(post.url, { waitUntil: 'domcontentloaded', timeout: Math.min(12000, remaining()) }),

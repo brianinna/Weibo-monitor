@@ -93,13 +93,20 @@ async function getBrowserSession(config) {
   }
 
   browserSession = await connectBrowser(config.browser, (message) => console.log(message));
-  pagePool = new PagePool(browserSession.context, { log: addLog });
+  pagePool = new PagePool(browserSession.context, {
+    log: addLog,
+    applyPageTimezone: browserSession.applyPageTimezone
+  });
   return browserSession;
 }
 
 async function getWeiboClient(config) {
   const session = await getBrowserSession(config);
-  return new WeiboClient(session.context, { pagePool, log: addLog });
+  return new WeiboClient(session.context, {
+    pagePool,
+    log: addLog,
+    applyPageTimezone: session.applyPageTimezone
+  });
 }
 
 function sendJson(res, status, body) {
@@ -278,6 +285,7 @@ async function getLoginPage(config) {
   if (loginPage && !loginPage.isClosed()) return loginPage;
   const existing = session.context.pages().find((page) => !page.isClosed());
   loginPage = existing || await session.context.newPage();
+  if (session.applyPageTimezone) await session.applyPageTimezone(loginPage);
   return loginPage;
 }
 
@@ -345,10 +353,6 @@ function uniquePosts(posts) {
     unique.push(post);
   }
   return unique;
-}
-
-function idsMinus(left, right) {
-  return Array.from(left).filter((id) => !right.has(id));
 }
 
 function getFreshPosts(scan, posts, knownIds, notifyOnFirstRun) {
@@ -521,7 +525,14 @@ async function checkOnce(config) {
   for (const update of stateUpdates) {
     const hasFailedFresh = Array.from(update.freshIds).some((id) => failedPostIds.has(id));
     const pendingNotificationIds = hasFailedFresh ? Array.from(update.freshIds).filter((id) => failedPostIds.has(id)) : [];
-    const deliveredNotificationIds = notificationSummary.skipped ? [] : idsMinus(update.freshIds, failedPostIds);
+    const pendingNotificationBindingsByPost = {};
+    const deliveredNotificationBindingsByPost = {};
+    for (const id of update.freshIds) {
+      const pendingBindings = (notificationSummary.failedBindingsByPost && notificationSummary.failedBindingsByPost[id]) || [];
+      const deliveredBindings = (notificationSummary.sentBindingsByPost && notificationSummary.sentBindingsByPost[id]) || [];
+      if (pendingBindings.length > 0) pendingNotificationBindingsByPost[id] = pendingBindings;
+      if (!notificationSummary.skipped && deliveredBindings.length > 0) deliveredNotificationBindingsByPost[id] = deliveredBindings;
+    }
 
     if (hasFailedFresh) {
       addLog(`uid=${update.uid} pending notification retry posts=${pendingNotificationIds.join(', ')}`);
@@ -529,7 +540,8 @@ async function checkOnce(config) {
 
     state.upsertPosts(update.uid, update.posts, {
       pendingNotificationIds,
-      deliveredNotificationIds
+      pendingNotificationBindingsByPost,
+      deliveredNotificationBindingsByPost
     });
   }
   await state.save();
@@ -825,6 +837,7 @@ server.listen(PORT, HOST, () => {
         const firstUser = config.users && config.users[0];
         const targetUrl = firstUser && firstUser.id ? `https://weibo.com/${firstUser.id}` : config.browser.loginUrl;
         const page = firstUser && firstUser.id ? await pagePool.getUserPage(firstUser.id) : await session.context.newPage();
+        if (session.applyPageTimezone) await session.applyPageTimezone(page);
         await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
         console.log('Controlled browser is ready.');
       })

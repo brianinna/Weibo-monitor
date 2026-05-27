@@ -114,6 +114,22 @@ function bindingKey(binding) {
   return [binding.name || '', binding.apiUrl || '', binding.to || ''].join('|');
 }
 
+function bindingDeliveryId(binding) {
+  return String(binding.name || binding.apiUrl || binding.to || bindingKey(binding)).trim();
+}
+
+function getPendingBindingIds(post) {
+  if (!Array.isArray(post && post.notificationPendingBindings)) return null;
+  return post.notificationPendingBindings.map((item) => String(item || '').trim()).filter(Boolean);
+}
+
+function shouldNotifyBindingForPost(post, binding) {
+  const pending = getPendingBindingIds(post);
+  if (!pending) return true;
+  if (pending.length === 0) return false;
+  return pending.includes(bindingDeliveryId(binding));
+}
+
 function parseBindingKey(key) {
   const [name = '', apiUrl = '', to = ''] = String(key || '').split('|');
   return { name, apiUrl, to };
@@ -342,13 +358,27 @@ async function notifyResults(config, results, options = {}) {
     failedPosts: 0,
     failedImages: 0,
     failedPostIds: [],
+    sentBindingsByPost: {},
+    failedBindingsByPost: {},
     skipped: false
   };
 
-  function markFailed(post, hasImage) {
+  function addPostBinding(map, post, binding) {
+    if (!post || !post.id || !binding) return;
+    if (!map[post.id]) map[post.id] = [];
+    const id = bindingDeliveryId(binding);
+    if (id && !map[post.id].includes(id)) map[post.id].push(id);
+  }
+
+  function markSent(post, binding) {
+    addPostBinding(summary.sentBindingsByPost, post, binding);
+  }
+
+  function markFailed(post, hasImage, binding) {
     summary.failedPosts += 1;
     if (hasImage) summary.failedImages += 1;
     if (post && post.id) failedPostIds.add(post.id);
+    addPostBinding(summary.failedBindingsByPost, post, binding);
   }
 
   if (!weclaw.enabled) {
@@ -367,9 +397,11 @@ async function notifyResults(config, results, options = {}) {
     for (const post of fresh) {
       const mediaUrl = buildScreenshotUrl(post, weclaw, options);
       for (const binding of bindings) {
+        if (!shouldNotifyBindingForPost(post, binding)) continue;
+
         if (!binding.to) {
           log(`WeClaw notification skipped binding=${binding.name || binding.apiUrl}: to is empty`);
-          markFailed(post, Boolean(mediaUrl));
+          markFailed(post, Boolean(mediaUrl), binding);
           continue;
         }
 
@@ -385,7 +417,7 @@ async function notifyResults(config, results, options = {}) {
         const outboundMessages = countPayloadMessages(payload);
         const guardDecision = guard.beforeSend(binding, outboundMessages, log);
         if (!guardDecision.ok) {
-          markFailed(post, Boolean(payload.media_url));
+          markFailed(post, Boolean(payload.media_url), binding);
           log(
             `WeClaw notification delayed post=${post.id} binding=${binding.name || binding.apiUrl}: conversationGuard=${guardDecision.reason}, detail=${guardDecision.message}`
           );
@@ -397,7 +429,7 @@ async function notifyResults(config, results, options = {}) {
 
         const cooldown = activeCooldown(binding);
         if (cooldown) {
-          markFailed(post, Boolean(mediaUrl));
+          markFailed(post, Boolean(mediaUrl), binding);
           log(
             `WeClaw notification delayed post=${post.id} binding=${binding.name || binding.apiUrl}: cooldown=${cooldown.reason}, retryAfter=${formatDuration(cooldown.until - Date.now())}`
           );
@@ -408,6 +440,7 @@ async function notifyResults(config, results, options = {}) {
           await sendWeclawPayload(binding, payload);
           noteSendSuccess(binding);
           guard.recordSent(binding, outboundMessages, log);
+          markSent(post, binding);
           summary.sentPosts += 1;
           log(`WeClaw text sent post=${post.id} binding=${binding.name || binding.apiUrl}`);
           if (payload.media_url) {
@@ -415,7 +448,7 @@ async function notifyResults(config, results, options = {}) {
             log(`WeClaw image sent post=${post.id} binding=${binding.name || binding.apiUrl}`);
           }
         } catch (error) {
-          markFailed(post, Boolean(payload.media_url));
+          markFailed(post, Boolean(payload.media_url), binding);
           const cooldownState = noteSendFailure(binding, error);
           log(`WeClaw notification failed post=${post.id} binding=${binding.name || binding.apiUrl}: ${error.message}`);
           if (cooldownState) {

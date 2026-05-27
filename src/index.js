@@ -42,10 +42,6 @@ function uniquePosts(posts) {
   return unique;
 }
 
-function idsMinus(left, right) {
-  return Array.from(left).filter((id) => !right.has(id));
-}
-
 function getFreshPosts(scan, posts, knownIds, notifyOnFirstRun) {
   if (knownIds.size === 0 && !notifyOnFirstRun) return [];
   if (Array.isArray(scan.newPosts)) return scan.newPosts;
@@ -66,7 +62,10 @@ async function startNotificationMediaServer(config) {
 
 async function checkOnce(config, state, options = {}) {
   const session = await connectBrowser(config.browser, log);
-  const client = new WeiboClient(session.context, { log });
+  const client = new WeiboClient(session.context, {
+    log,
+    applyPageTimezone: session.applyPageTimezone
+  });
   const results = [];
   const stateUpdates = [];
   const screenshotFailures = [];
@@ -153,7 +152,14 @@ async function checkOnce(config, state, options = {}) {
   for (const update of stateUpdates) {
     const hasFailedFresh = Array.from(update.freshIds).some((id) => failedPostIds.has(id));
     const pendingNotificationIds = hasFailedFresh ? Array.from(update.freshIds).filter((id) => failedPostIds.has(id)) : [];
-    const deliveredNotificationIds = notificationSummary.skipped ? [] : idsMinus(update.freshIds, failedPostIds);
+    const pendingNotificationBindingsByPost = {};
+    const deliveredNotificationBindingsByPost = {};
+    for (const id of update.freshIds) {
+      const pendingBindings = (notificationSummary.failedBindingsByPost && notificationSummary.failedBindingsByPost[id]) || [];
+      const deliveredBindings = (notificationSummary.sentBindingsByPost && notificationSummary.sentBindingsByPost[id]) || [];
+      if (pendingBindings.length > 0) pendingNotificationBindingsByPost[id] = pendingBindings;
+      if (!notificationSummary.skipped && deliveredBindings.length > 0) deliveredNotificationBindingsByPost[id] = deliveredBindings;
+    }
 
     if (hasFailedFresh) {
       log(`uid=${update.uid} pending notification retry posts=${pendingNotificationIds.join(', ')}`);
@@ -161,7 +167,8 @@ async function checkOnce(config, state, options = {}) {
 
     state.upsertPosts(update.uid, update.posts, {
       pendingNotificationIds,
-      deliveredNotificationIds
+      pendingNotificationBindingsByPost,
+      deliveredNotificationBindingsByPost
     });
   }
   await state.save();

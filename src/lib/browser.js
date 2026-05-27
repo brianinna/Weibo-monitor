@@ -314,11 +314,9 @@ async function applyPageTimezone(page, timezoneId, log) {
   }
 }
 
-function applyContextTimezone(context, timezoneId, log) {
+async function applyContextTimezone(context, timezoneId, log) {
   if (!timezoneId) return;
-  for (const page of context.pages()) {
-    applyPageTimezone(page, timezoneId, log);
-  }
+  await Promise.all(context.pages().map((page) => applyPageTimezone(page, timezoneId, log)));
   context.on('page', (page) => {
     applyPageTimezone(page, timezoneId, log);
   });
@@ -410,11 +408,15 @@ async function connectBrowser(browserConfig = {}, log = () => {}) {
   const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
   const contexts = browser.contexts();
   const context = contexts[0] || await browser.newContext();
-  applyContextTimezone(context, timezoneId, log);
+  await applyContextTimezone(context, timezoneId, log);
 
   return {
     browser,
     context,
+    timezoneId,
+    async applyPageTimezone(page) {
+      await applyPageTimezone(page, timezoneId, log);
+    },
     managed: Boolean(launchedChild),
     async close(options = {}) {
       const force = Boolean(options.force);

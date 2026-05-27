@@ -23,6 +23,7 @@ class PagePool {
     this.context = context;
     this.pages = new Map();
     this.log = options.log || (() => {});
+    this.applyPageTimezone = options.applyPageTimezone || (async () => {});
   }
 
   async getUserPage(uid) {
@@ -31,6 +32,7 @@ class PagePool {
     if (existing && !existing.isClosed()) return existing;
 
     const page = await this.context.newPage();
+    await this.applyPageTimezone(page);
     return this.trackPage(key, page);
   }
 

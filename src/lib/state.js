@@ -19,18 +19,15 @@ class StateStore {
 
   getUserPostIds(uid, options = {}) {
     const user = this.state.users[uid];
-    const includePending = options.includePending === true;
-    return new Set(
-      (user && user.posts ? user.posts : [])
-        .filter((post) => includePending || !post.notificationPending)
-        .map((post) => post.id)
-    );
+    return new Set((user && user.posts ? user.posts : []).map((post) => post.id));
   }
 
   getPendingNotificationPosts(uid) {
     const user = this.state.users[uid];
     const posts = user && user.posts ? user.posts : [];
-    return posts.filter((post) => post.notificationPending);
+    return posts.filter(
+      (post) => post.notificationPending && Array.isArray(post.notificationPendingBindings) && post.notificationPendingBindings.length > 0
+    );
   }
 
   getLatestPost(uid) {
@@ -46,20 +43,49 @@ class StateStore {
     const fresh = [];
     const pendingNotificationIds = new Set(options.pendingNotificationIds || []);
     const deliveredNotificationIds = new Set(options.deliveredNotificationIds || []);
+    const pendingBindingsByPost = options.pendingNotificationBindingsByPost || {};
+    const deliveredBindingsByPost = options.deliveredNotificationBindingsByPost || {};
 
     for (const post of posts) {
       const old = existing.get(post.id);
       const oldAttempts = old && Number.isFinite(Number(old.notificationAttempts)) ? Number(old.notificationAttempts) : 0;
       const notificationPatch = {};
-      if (pendingNotificationIds.has(post.id)) {
+      const oldPendingBindings =
+        old && Array.isArray(old.notificationPendingBindings)
+          ? old.notificationPendingBindings.map((item) => String(item || '').trim()).filter(Boolean)
+          : [];
+      const pendingBindings = (pendingBindingsByPost[post.id] || []).map((item) => String(item || '').trim()).filter(Boolean);
+      const deliveredBindings = (deliveredBindingsByPost[post.id] || []).map((item) => String(item || '').trim()).filter(Boolean);
+
+      if (pendingBindings.length > 0 || deliveredBindings.length > 0) {
+        const delivered = new Set(deliveredBindings);
+        const nextPending = oldPendingBindings.filter((item) => !delivered.has(item));
+        for (const item of pendingBindings) {
+          if (!nextPending.includes(item)) nextPending.push(item);
+        }
+        notificationPatch.notificationPending = nextPending.length > 0;
+        notificationPatch.notificationPendingBindings = nextPending;
+        notificationPatch.notificationLastAttemptAt = now;
+        if (pendingBindings.length > 0) {
+          notificationPatch.notificationFailedAt = now;
+          notificationPatch.notificationAttempts = oldAttempts + 1;
+        }
+        if (deliveredBindings.length > 0) {
+          notificationPatch.notificationDeliveredAt = now;
+        }
+      } else if (pendingNotificationIds.has(post.id)) {
         notificationPatch.notificationPending = true;
         notificationPatch.notificationFailedAt = now;
         notificationPatch.notificationLastAttemptAt = now;
         notificationPatch.notificationAttempts = oldAttempts + 1;
       } else if (deliveredNotificationIds.has(post.id)) {
         notificationPatch.notificationPending = false;
+        notificationPatch.notificationPendingBindings = [];
         notificationPatch.notificationDeliveredAt = now;
         notificationPatch.notificationLastAttemptAt = now;
+      } else if (old && old.notificationPending && !Array.isArray(old.notificationPendingBindings)) {
+        notificationPatch.notificationPending = false;
+        notificationPatch.notificationPendingBindings = [];
       }
 
       if (!old) {
