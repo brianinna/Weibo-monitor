@@ -383,6 +383,46 @@ function weclawNotifyOptions(extra = {}) {
   };
 }
 
+function notificationBindingDeliveryId(binding) {
+  return String(binding.name || binding.apiUrl || binding.to || [binding.name || '', binding.apiUrl || '', binding.to || ''].join('|')).trim();
+}
+
+function buildNotificationFailureSummary(config, results) {
+  const weclaw = getWeclawConfig(config);
+  const bindingIds = weclaw.enabled
+    ? (weclaw.bindings || [])
+        .filter((binding) => binding.enabled !== false && binding.apiUrl)
+        .map(notificationBindingDeliveryId)
+        .filter(Boolean)
+    : [];
+  const failedPostIds = new Set();
+  const failedBindingsByPost = {};
+  const bindingFailureCount = Math.max(1, bindingIds.length);
+  const summary = {
+    sentPosts: 0,
+    sentImages: 0,
+    failedPosts: 0,
+    failedImages: 0,
+    failedPostIds: [],
+    sentBindingsByPost: {},
+    failedBindingsByPost,
+    skipped: false
+  };
+
+  for (const result of results || []) {
+    for (const post of result.fresh || []) {
+      if (!post || !post.id) continue;
+      failedPostIds.add(post.id);
+      if (bindingIds.length > 0) failedBindingsByPost[post.id] = bindingIds;
+      summary.failedPosts += bindingFailureCount;
+      if (weclaw.sendImages !== false && post.screenshot) summary.failedImages += bindingFailureCount;
+    }
+  }
+
+  summary.failedPostIds = Array.from(failedPostIds);
+  return summary;
+}
+
 function resetWeclawNotificationStateForBinding(binding, reason) {
   try {
     const result = resetWeclawBindingNotificationState(readConfig(), binding, weclawNotifyOptions());
@@ -509,12 +549,20 @@ async function checkOnce(config) {
     });
   }
 
-  const notificationSummary = await notifyResults(config, results, {
-    log: addLog,
-    mediaBaseUrl: getMediaBaseUrl(config),
-    root: ROOT,
-    weclawRuntimeLogText: runtimeLogs.join('\n')
-  });
+  let notificationError = null;
+  let notificationSummary;
+  try {
+    notificationSummary = await notifyResults(config, results, {
+      log: addLog,
+      mediaBaseUrl: getMediaBaseUrl(config),
+      root: ROOT,
+      weclawRuntimeLogText: runtimeLogs.join('\n')
+    });
+  } catch (error) {
+    notificationError = error;
+    addLog(`notification failed before state save: ${firstErrorLine(error)}`);
+    notificationSummary = buildNotificationFailureSummary(config, results);
+  }
   if (!notificationSummary.skipped) {
     addLog(
       `notification done posts=${notificationSummary.sentPosts}, images=${notificationSummary.sentImages}, failedPosts=${notificationSummary.failedPosts}, failedImages=${notificationSummary.failedImages}`
@@ -560,6 +608,9 @@ async function checkOnce(config) {
     warningLines.push(
       `Notification failures posts=${notificationSummary.failedPosts}, images=${notificationSummary.failedImages}, retryPostIds=${(notificationSummary.failedPostIds || []).join(', ')}`
     );
+  }
+  if (notificationError) {
+    warningLines.push(`Notification error=${firstErrorLine(notificationError)}`);
   }
   if (warningLines.length > 0) {
     await notifyMonitorError(config, new Error(warningLines.filter(Boolean).join('\n')), weclawNotifyOptions({ reason: 'degraded' }));

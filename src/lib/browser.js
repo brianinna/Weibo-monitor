@@ -15,6 +15,14 @@ function withTimeout(promise, timeoutMs, message) {
   });
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function firstErrorLine(error) {
+  return String((error && error.message) || error || '').split(/\r?\n/)[0];
+}
+
 function expandEnv(input) {
   if (!input) return input;
   return input
@@ -182,16 +190,24 @@ function isCdpVersionPayload(payload) {
   return Boolean(payload && payload.webSocketDebuggerUrl && payload.Browser);
 }
 
-async function probeDebugPort(port) {
-  const response = await fetch(`http://127.0.0.1:${port}/json/version`);
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+async function probeDebugPort(port, timeoutMs = 1000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/json/version`, {
+      signal: controller.signal
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const payload = await response.json();
+    if (!isCdpVersionPayload(payload)) {
+      throw new Error(`Port ${port} is open but is not a Chrome DevTools endpoint`);
+    }
+    return payload;
+  } finally {
+    clearTimeout(timer);
   }
-  const payload = await response.json();
-  if (!isCdpVersionPayload(payload)) {
-    throw new Error(`Port ${port} is open but is not a Chrome DevTools endpoint`);
-  }
-  return payload;
 }
 
 async function waitForDebugPort(port, timeoutMs) {
@@ -200,14 +216,29 @@ async function waitForDebugPort(port, timeoutMs) {
 
   while (Date.now() < deadline) {
     try {
-      return await probeDebugPort(port);
+      return await probeDebugPort(port, Math.max(1, Math.min(1000, deadline - Date.now())));
     } catch (error) {
       lastError = error;
     }
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    await sleep(500);
   }
 
   throw new Error(`Timed out waiting for browser debug port ${port}: ${lastError ? lastError.message : 'unknown'}`);
+}
+
+async function waitForDebugPortToClose(port, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    try {
+      await probeDebugPort(port, 500);
+    } catch (_) {
+      return true;
+    }
+    await sleep(300);
+  }
+
+  return false;
 }
 
 function waitForChildExit(child, timeoutMs) {
@@ -223,6 +254,24 @@ function waitForChildExit(child, timeoutMs) {
     };
     child.once('exit', onExit);
   });
+}
+
+function isProcessAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+async function waitForProcessExit(pid, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!isProcessAlive(pid)) return true;
+    await sleep(200);
+  }
+  return !isProcessAlive(pid);
 }
 
 async function terminateChild(child, log, label = 'browser') {
@@ -271,16 +320,17 @@ function readProcessList() {
 }
 
 async function killBrowserProcessesByDebugPort(port, log) {
-  if (process.platform === 'win32' || !isContainer()) return;
+  if (process.platform === 'win32' || !isContainer()) return [];
   const marker = `--remote-debugging-port=${port}`;
   let output = '';
   try {
     output = await readProcessList();
   } catch (error) {
     log(`Could not list browser processes for debug port cleanup: ${error.message}`);
-    return;
+    return [];
   }
 
+  const pids = [];
   for (const line of output.split(/\r?\n/)) {
     const match = line.trim().match(/^(\d+)\s+(.+)$/);
     if (!match) continue;
@@ -290,17 +340,112 @@ async function killBrowserProcessesByDebugPort(port, log) {
     try {
       log(`Terminating stale browser debug-port process pid=${pid} port=${port}`);
       process.kill(pid, 'SIGTERM');
+      pids.push(pid);
     } catch (error) {
       log(`Could not terminate stale browser process pid=${pid}: ${error.message}`);
-      continue;
     }
-    setTimeout(() => {
-      try {
-        process.kill(pid, 'SIGKILL');
-      } catch (_) {
-      }
-    }, 3000).unref();
   }
+
+  for (const pid of pids) {
+    const exited = await waitForProcessExit(pid, 3000);
+    if (exited) continue;
+    try {
+      log(`Force killing stale browser debug-port process pid=${pid} port=${port}`);
+      process.kill(pid, 'SIGKILL');
+    } catch (error) {
+      log(`Could not force kill stale browser process pid=${pid}: ${error.message}`);
+    }
+  }
+
+  for (const pid of pids) {
+    await waitForProcessExit(pid, 3000);
+  }
+
+  return pids;
+}
+
+function isCdpConnectFailure(error) {
+  const message = String((error && error.message) || error || '');
+  return /connectOverCDP|Timeout .*exceeded|WebSocket|ECONNRESET|ECONNREFUSED|socket|Target page, context or browser has been closed|Target closed|Browser has been closed|browser has disconnected/i.test(message);
+}
+
+async function launchBrowserToDebugPort(browserConfig, log, port, startupTimeoutMs, timezoneId) {
+  const executables = findBrowserExecutables(browserConfig);
+  const errors = [];
+
+  for (const executable of executables) {
+    const userDataDir = expandEnv(browserConfig.userDataDir) || defaultUserDataDir(executable);
+    removeStaleBrowserLocks(userDataDir, log);
+    const startupUrl = browserConfig.loginUrl || 'https://passport.weibo.com/sso/signin?entry=account&source=sinassopage&url=https%3A%2F%2Fmy.sina.com.cn';
+    const baseArgs = [
+      `--remote-debugging-port=${port}`,
+      '--remote-debugging-address=127.0.0.1',
+      `--user-data-dir=${userDataDir}`,
+      `--profile-directory=${browserConfig.profileDirectory || 'Default'}`,
+      '--no-first-run',
+      '--no-default-browser-check',
+    ];
+    if (isContainer()) {
+      baseArgs.push(
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--disable-software-rasterizer',
+        '--disable-crash-reporter',
+        '--no-zygote',
+        '--window-size=1366,768'
+      );
+    }
+
+    const headlessOverride = process.env.WEIBO_MONITOR_BROWSER_HEADLESS;
+    if (headlessOverride === '1' || (headlessOverride !== '0' && browserConfig.headless)) {
+      baseArgs.push('--headless=new');
+    }
+    if (Array.isArray(browserConfig.args)) baseArgs.push(...browserConfig.args);
+    const args = uniqueArgs(baseArgs);
+    args.push(startupUrl);
+
+    log(`Launching browser: ${executable}`);
+    log(`User data dir: ${userDataDir}`);
+
+    const child = spawn(executable, args, {
+      detached: process.platform === 'win32',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, TZ: timezoneId },
+      windowsHide: process.platform === 'win32' ? false : undefined
+    });
+    if (child.stdout) child.stdout.on('data', (chunk) => log(`[browser:out] ${String(chunk).trim()}`));
+    if (child.stderr) child.stderr.on('data', (chunk) => log(`[browser:err] ${String(chunk).trim()}`));
+    child.on('error', (error) => log(`Browser process error: ${error.message}`));
+    child.on('exit', (code, signal) => log(`Browser process exited code=${code} signal=${signal || 'none'}`));
+    if (process.platform === 'win32') child.unref();
+
+    try {
+      await waitForDebugPort(port, startupTimeoutMs);
+      return child;
+    } catch (error) {
+      errors.push(`${executable}: ${error.message}`);
+      log('Browser debug port was not ready; trying next candidate.');
+      await terminateChild(child, log);
+    }
+  }
+
+  throw new Error(
+    `Could not launch a browser with remote debugging.\n${errors.join('\n')}\n` +
+      'If the browser is already open, close Edge/Chrome and retry, or set a separate browser.userDataDir.'
+  );
+}
+
+async function restartStaleBrowserDebugPort(browserConfig, log, port, launchedChild) {
+  await terminateChild(launchedChild, log);
+  const pids = await killBrowserProcessesByDebugPort(port, log);
+  const closed = await waitForDebugPortToClose(port, 8000);
+  if (!closed) {
+    const detail = pids.length > 0 ? `after terminating pids=${pids.join(',')}` : 'and no matching browser process was found';
+    throw new Error(`Browser debug port ${port} is still responding after stale-browser cleanup (${detail}).`);
+  }
+  return connectBrowser(browserConfig, log, { forceLaunch: true, allowStaleRestart: false });
 }
 
 async function applyPageTimezone(page, timezoneId, log) {
@@ -323,89 +468,37 @@ async function applyContextTimezone(context, timezoneId, log) {
   log(`Browser timezone override: ${timezoneId}`);
 }
 
-async function connectBrowser(browserConfig = {}, log = () => {}) {
+async function connectBrowser(browserConfig = {}, log = () => {}, internal = {}) {
   const port = Number(browserConfig.remoteDebuggingPort || 18788);
   const startupTimeoutMs = Number(browserConfig.startupTimeoutMs || 15000);
+  const connectTimeoutMs = Number(browserConfig.connectTimeoutMs || 30000);
   const timezoneId = browserConfig.timezoneId || getTimeZone();
   let launchedChild = null;
 
-  try {
-    const version = await waitForDebugPort(port, 800);
-    log(`Connected to existing browser debug port ${port}: ${version.Browser}`);
-  } catch (_) {
-    const executables = findBrowserExecutables(browserConfig);
-    const errors = [];
-
-    for (const executable of executables) {
-      const userDataDir = expandEnv(browserConfig.userDataDir) || defaultUserDataDir(executable);
-      removeStaleBrowserLocks(userDataDir, log);
-      const startupUrl = browserConfig.loginUrl || 'https://passport.weibo.com/sso/signin?entry=account&source=sinassopage&url=https%3A%2F%2Fmy.sina.com.cn';
-      const baseArgs = [
-        `--remote-debugging-port=${port}`,
-        '--remote-debugging-address=127.0.0.1',
-        `--user-data-dir=${userDataDir}`,
-        `--profile-directory=${browserConfig.profileDirectory || 'Default'}`,
-        '--no-first-run',
-        '--no-default-browser-check',
-      ];
-      if (isContainer()) {
-        baseArgs.push(
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
-          '--disable-gpu',
-          '--disable-software-rasterizer',
-          '--disable-crash-reporter',
-          '--no-zygote',
-          '--window-size=1366,768'
-        );
-      }
-
-      const headlessOverride = process.env.WEIBO_MONITOR_BROWSER_HEADLESS;
-      if (headlessOverride === '1' || (headlessOverride !== '0' && browserConfig.headless)) {
-        baseArgs.push('--headless=new');
-      }
-      if (Array.isArray(browserConfig.args)) baseArgs.push(...browserConfig.args);
-      const args = uniqueArgs(baseArgs);
-      args.push(startupUrl);
-
-      log(`Launching browser: ${executable}`);
-      log(`User data dir: ${userDataDir}`);
-
-      const child = spawn(executable, args, {
-        detached: process.platform === 'win32',
-        stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...process.env, TZ: timezoneId },
-        windowsHide: process.platform === 'win32' ? false : undefined
-      });
-      launchedChild = child;
-      if (child.stdout) child.stdout.on('data', (chunk) => log(`[browser:out] ${String(chunk).trim()}`));
-      if (child.stderr) child.stderr.on('data', (chunk) => log(`[browser:err] ${String(chunk).trim()}`));
-      child.on('error', (error) => log(`Browser process error: ${error.message}`));
-      child.on('exit', (code, signal) => log(`Browser process exited code=${code} signal=${signal || 'none'}`));
-      if (process.platform === 'win32') child.unref();
-
-      try {
-        await waitForDebugPort(port, startupTimeoutMs);
-        errors.length = 0;
-        break;
-      } catch (error) {
-        errors.push(`${executable}: ${error.message}`);
-        log('Browser debug port was not ready; trying next candidate.');
-        await terminateChild(child, log);
-        launchedChild = null;
-      }
-    }
-
-    if (errors.length > 0) {
-      throw new Error(
-        `Could not launch a browser with remote debugging.\n${errors.join('\n')}\n` +
-          'If the browser is already open, close Edge/Chrome and retry, or set a separate browser.userDataDir.'
-      );
+  if (internal.forceLaunch) {
+    launchedChild = await launchBrowserToDebugPort(browserConfig, log, port, startupTimeoutMs, timezoneId);
+  } else {
+    try {
+      const version = await waitForDebugPort(port, 800);
+      log(`Connected to existing browser debug port ${port}: ${version.Browser}`);
+    } catch (_) {
+      launchedChild = await launchBrowserToDebugPort(browserConfig, log, port, startupTimeoutMs, timezoneId);
     }
   }
 
-  const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
+  let browser;
+  try {
+    browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`, { timeout: connectTimeoutMs });
+  } catch (error) {
+    const canRestartStaleBrowser = internal.allowStaleRestart !== false && (isContainer() || launchedChild);
+    if (canRestartStaleBrowser && isCdpConnectFailure(error)) {
+      log(`Browser debug port ${port} did not complete CDP connect: ${firstErrorLine(error)}; restarting browser`);
+      return restartStaleBrowserDebugPort(browserConfig, log, port, launchedChild);
+    }
+    await terminateChild(launchedChild, log);
+    throw error;
+  }
+
   const contexts = browser.contexts();
   const context = contexts[0] || await browser.newContext();
   await applyContextTimezone(context, timezoneId, log);
